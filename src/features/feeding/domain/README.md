@@ -1,3 +1,3 @@
 # Domain
 
-Future feeding business rules, entities, use cases, and repository contracts belong here. Keep this layer framework- and infrastructure-independent.
+Future feeding business rules and entities belong here. Keep this layer framework- and infrastructure-independent; use cases and infrastructure ports belong in an application layer when needed.
