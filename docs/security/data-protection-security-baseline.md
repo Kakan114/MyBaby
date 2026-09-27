@@ -137,21 +137,37 @@ Every server operation must separately establish authentication (who is calling)
 
 ## 5. Local and offline data
 
-SQLite is planned for offline-first core logging. Real sensitive production data must not be introduced into local persistence until a documented decision covers:
+The local-storage architecture is fixed by [ADR-0001: Encrypted local storage](../adr/0001-encrypted-local-storage.md):
 
-- threats from lost, stolen, shared, jailbroken, rooted, or unlocked devices;
-- database encryption and platform support;
-- encryption-key generation, storage, rotation, recovery, and deletion;
-- device backup behavior;
-- logout, account deletion, child deletion, and cache purge;
-- membership revocation;
-- schema migration, recovery, crash dumps, and debugging exposure.
+- The first production database containing child or potentially health-related data must use SQLCipher through Expo SQLite. A plaintext production database must not be created as an intermediate architecture.
+- The database key must be a cryptographically random 256-bit value stored through Expo SecureStore. It must never be stored in SQLite, AsyncStorage, source code, client-exposed environment variables, logs, crash reports, or analytics.
+- SQLCipher, SecureStore, and Expo are data/infrastructure details. Domain and application code must not import or depend on them.
+- Local SQLite is a reconstructable offline copy/cache of synchronized server data, not a backup or independent source of recovery.
+- The database and related sensitive cache files are excluded from OS/cloud backup by default. Unsynchronized mutations may therefore be lost if the device is lost, damaged, or reset before synchronization.
+- General field-level encryption is not added on top of SQLCipher in the MVP without a separately documented threat or requirement.
+- Logout, account deletion, child deletion, session loss, and membership revocation require explicit secure-purge semantics. A UI logout alone must never be assumed to have securely removed local data.
+- SQLCipher is unavailable in Expo Go. Persistence development and verification require development builds and production builds configured with SQLCipher.
 
-SQLCipher or an equivalent encrypted-database strategy must be evaluated before locally storing sensitive child or health-related data. Keys must be held in an OS-protected Keychain/Keystore mechanism, not beside the database. Authentication tokens and secrets must not be placed in ordinary SQLite or unprotected AsyncStorage; they require protected storage and a documented expiration, refresh, logout, deletion, and compromise lifecycle.
+Authentication tokens and other secrets must not be placed in ordinary SQLite or unprotected AsyncStorage. They require protected storage and a documented expiration, refresh, logout, deletion, and compromise lifecycle.
 
 Revoking a member can stop future server access but cannot recover data already decrypted on an offline device. The app must purge local child data as soon as revocation is detected. This residual limitation must be included in the threat model and sharing design.
 
 Synchronization queues are untrusted input. Server authorization, validation, idempotency, replay protection, ownership checks, and deletion/tombstone handling still apply after reconnect.
+
+The following decisions remain open and must be resolved when the relevant authentication, synchronization, or persistence capability is designed, and no later than production readiness:
+
+- maximum offline authorization lease/offline period;
+- final family-access revocation policy;
+- treatment of unsynchronized mutations during logout;
+- database-key rotation;
+- recovery after loss or invalidation of the SecureStore key;
+- optional future app lock or biometric gate;
+- rooted/jailbroken-device policy;
+- detailed multi-account database and key strategy;
+- final per-platform backup and CNG configuration;
+- complete test matrix for backup/restore, revocation, key loss, deletion, and recovery.
+
+Relevant platform requirements are documented by [Expo SQLite](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/), [Expo SecureStore](https://docs.expo.dev/versions/v57.0.0/sdk/securestore/), [Apple Keychain accessibility](https://developer.apple.com/documentation/security/restricting-keychain-item-accessibility), [Apple backup exclusion](https://developer.apple.com/documentation/foundation/optimizing-your-app-s-data-for-icloud-backup), [Android Keystore](https://developer.android.com/privacy-and-security/keystore), [Android Auto Backup](https://developer.android.com/identity/data/autobackup), and the [SQLCipher API](https://www.zetetic.net/sqlcipher/sqlcipher-api/).
 
 ## 6. Transport, cloud, backup, and restore
 
@@ -162,6 +178,7 @@ Synchronization queues are untrusted input. Server authorization, validation, id
 - Identify and assess third-country transfers under GDPR Chapter V; EU primary hosting does not prove that no transfer or third-country access occurs.
 - Define encryption at rest, access, retention, and deletion for every cloud service.
 - Define backup frequency, retention, access, encryption, restore responsibility, and restoration tests.
+- Exclude the local SQLCipher database and related sensitive cache files from device and cloud backups unless a later reviewed decision explicitly replaces the reconstructable-cache model.
 - Restores must not silently reintroduce previously deleted records.
 - Document backup aging and reapplication of deletion/tombstone records after restore.
 
