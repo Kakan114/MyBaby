@@ -22,3 +22,7 @@ MyBaby uses feature-based modules with an inward dependency direction. Add code 
 - Domain code must remain framework-independent. It must not import React, React Native, Expo, SQLite, Supabase, or other infrastructure libraries.
 - Shared data infrastructure and app-wide services must not become homes for feature-specific business logic.
 - Avoid circular dependencies. Prefer direct imports; add a barrel (`index.ts`) only when it defines a deliberate public API, not by default.
+
+## Data protection and security
+
+Development involving user, child, health-related, media, authentication, or other sensitive data must follow [`docs/security/data-protection-security-baseline.md`](../docs/security/data-protection-security-baseline.md).
