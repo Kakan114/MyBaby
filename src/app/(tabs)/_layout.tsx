@@ -2,6 +2,7 @@ import { SymbolView } from 'expo-symbols';
 import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
 import type { ColorValue } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { lightColors, spacing, typography } from '@/theme/tokens';
 
@@ -12,6 +13,8 @@ function TabIcon({ color, name }: { color: ColorValue; name: TabIconName }) {
 }
 
 export default function TabLayout() {
+  const { t } = useTranslation();
+
   return (
     <Tabs
       screenOptions={{
@@ -31,7 +34,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Idag',
+          title: t('navigation.today'),
           tabBarIcon: ({ color }) => (
             <TabIcon
               color={color}
@@ -43,7 +46,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="log"
         options={{
-          title: 'Logga',
+          title: t('navigation.log'),
           tabBarIcon: ({ color }) => (
             <TabIcon
               color={color}
@@ -55,7 +58,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="learn"
         options={{
-          title: 'Lär',
+          title: t('navigation.learn'),
           tabBarIcon: ({ color }) => (
             <TabIcon
               color={color}
@@ -67,7 +70,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="assistant"
         options={{
-          title: 'Assistent',
+          title: t('navigation.assistant'),
           tabBarIcon: ({ color }) => (
             <TabIcon
               color={color}
@@ -79,7 +82,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="family"
         options={{
-          title: 'Familj',
+          title: t('navigation.family'),
           tabBarIcon: ({ color }) => (
             <TabIcon color={color} name={{ ios: 'person.2.fill', android: 'group', web: 'group' }} />
           ),
