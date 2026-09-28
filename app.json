@@ -13,7 +13,8 @@
         "CFBundleLocalizations": [
           "sv"
         ]
-      }
+      },
+      "bundleIdentifier": "com.anonymous.MyBaby"
     },
     "android": {
       "adaptiveIcon": {
@@ -58,7 +59,15 @@
           "useSQLCipher": true
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

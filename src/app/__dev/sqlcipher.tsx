@@ -21,7 +21,7 @@ export default function SqlCipherVerificationScreen() {
   const [state, setState] = useState<VerificationState>({ status: 'idle' });
 
   if (!__DEV__) {
-    return <Redirect href="/index" />;
+    return <Redirect href="/" />;
   }
 
   const runVerification = async () => {
