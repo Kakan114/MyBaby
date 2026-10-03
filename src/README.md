@@ -5,9 +5,10 @@ MyBaby uses feature-based modules with an inward dependency direction. Add code 
 ## Directory ownership
 
 - `app/` contains thin Expo Router routes. Routes may compose features, but must not contain business logic or access databases directly.
+- `runtime/` is the application composition and lifecycle boundary. It connects feature use cases to concrete infrastructure and exposes typed feature APIs to React without exposing SQLite details.
 - `features/*/` owns feature-specific presentation, application, domain, and data code as needed. See `features/README.md` and the documented feature structures.
 - `components/` contains only generic, reusable UI components that do not belong to a feature.
-- `data/local/`, `data/remote/`, and `data/sync/` are shared infrastructure boundaries for SQLite, Supabase, and synchronization. They are not implemented yet.
+- `data/local/`, `data/remote/`, and `data/sync/` are shared infrastructure boundaries for SQLite, Supabase, and synchronization. `data/local/` owns the encrypted local database foundation; remote data and sync remain deferred.
 - `services/` contains app-wide integrations such as authentication, notifications, and AI. Feature-specific business logic does not belong there.
 - `types/` contains only genuinely app-wide TypeScript types. Feature models belong in that feature's domain layer.
 - `utils/` contains pure, generic helpers without feature-specific business rules.
@@ -21,6 +22,7 @@ MyBaby uses feature-based modules with an inward dependency direction. Add code 
 - Within a feature, presentation may depend on application, application may depend on domain, and data may implement application-owned infrastructure contracts. Domain must not depend on application, presentation, or data.
 - Domain code must remain framework-independent. It must not import React, React Native, Expo, SQLite, Supabase, or other infrastructure libraries.
 - Shared data infrastructure and app-wide services must not become homes for feature-specific business logic.
+- `AppRuntime` owns shared infrastructure lifecycles. Feature runtime APIs delegate to application use cases rather than duplicating their rules.
 - Avoid circular dependencies. Prefer direct imports; add a barrel (`index.ts`) only when it defines a deliberate public API, not by default.
 
 ## Data protection and security
