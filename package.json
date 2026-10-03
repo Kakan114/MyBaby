@@ -2,6 +2,10 @@
   "name": "mybaby",
   "main": "expo-router/entry",
   "version": "1.0.0",
+  "packageManager": "npm@11.19.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "dependencies": {
     "@expo/ui": "~57.0.20",
     "expo": "~57.0.25",
@@ -47,7 +51,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "test": "vitest run",
-    "lint": "expo lint"
+    "typecheck": "tsc --noEmit",
+    "check": "git diff --check HEAD && npm run typecheck && npm test"
   },
   "private": true
 }
