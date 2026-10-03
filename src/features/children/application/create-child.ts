@@ -1,5 +1,6 @@
 import type { CalendarDate } from '../domain/calendar-date';
 import { createChild, type Child } from '../domain/child';
+import type { ActiveChildRepository } from './active-child-repository';
 import type { ChildIdGenerator } from './child-id-generator';
 import type { ChildRepository } from './child-repository';
 
@@ -9,6 +10,7 @@ export type CreateChildRequest = Readonly<{
 }>;
 
 export type CreateChildDependencies = Readonly<{
+  activeChildRepository: ActiveChildRepository;
   childRepository: ChildRepository;
   childIdGenerator: ChildIdGenerator;
 }>;
@@ -28,6 +30,7 @@ export async function createChildUseCase(
   );
 
   await dependencies.childRepository.save(child);
+  await dependencies.activeChildRepository.setActiveChildIdIfUnset(child.id);
 
   return child;
 }

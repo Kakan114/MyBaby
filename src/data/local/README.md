@@ -8,7 +8,9 @@ The key is stored as exactly 64 lowercase hexadecimal characters. SecureStore us
 
 SQLCipher is not available in Expo Go. This persistence path requires an iOS/Android development build or production build with the `expo-sqlite` config plugin and `useSQLCipher: true`.
 
-Product-schema migrations use `PRAGMA user_version`, run sequentially in exclusive transactions, and advance the version only inside the successful transaction. Schema version 1 creates only the `children` table. A newer unsupported version or any migration failure aborts initialization, closes the opened connection, and returns a sanitized error; the database is never automatically deleted or recreated.
+Product-schema migrations use `PRAGMA user_version`, run sequentially in exclusive transactions, and advance the version only inside the successful transaction. Schema version 1 creates only the `children` table; version 2 adds the `active_child_selection` singleton with a foreign key to `children`. Migration never selects an arbitrary existing child. A newer unsupported version or any migration failure aborts initialization, closes the opened connection, and returns a sanitized error; the database is never automatically deleted or recreated.
+
+Encrypted SQLite is canonical for the active-child preference; React is not. The first newly created child becomes active only when selection is unset. A future normal child deletion is covered by the foreign-key cascade, while conditional stale-reference recovery exists only as defensive integrity handling.
 
 The synthetic `__mybaby_sqlcipher_verification` table remains outside the product schema and migrations. It belongs only to the development verification harness and is neither modified nor removed by product migrations.
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createCalendarDate } from '../domain/calendar-date';
 import type { Child } from '../domain/child';
+import type { ActiveChildRepository } from './active-child-repository';
 import type { ChildIdGenerator } from './child-id-generator';
 import type { ChildRepository } from './child-repository';
 import { createChildUseCase } from './create-child';
@@ -18,18 +19,48 @@ class FakeChildRepository implements ChildRepository {
   }
 }
 
+class FakeActiveChildRepository implements ActiveChildRepository {
+  activeChildId: string | null = null;
+
+  async getActiveChildId(): Promise<string | null> {
+    return this.activeChildId;
+  }
+
+  async setActiveChildId(id: string): Promise<void> {
+    this.activeChildId = id;
+  }
+
+  async setActiveChildIdIfUnset(id: string): Promise<void> {
+    this.activeChildId ??= id;
+  }
+
+  async clearActiveChildIdIfMatches(id: string): Promise<void> {
+    if (this.activeChildId === id) {
+      this.activeChildId = null;
+    }
+  }
+}
+
 function createIdGenerator(id: string): ChildIdGenerator {
   return { generate: () => id };
 }
 
 const asOf = createCalendarDate('2025-06-15');
 
+function createDependencies(childRepository: ChildRepository) {
+  return {
+    activeChildRepository: new FakeActiveChildRepository(),
+    childRepository,
+    childIdGenerator: createIdGenerator('generated-child-id'),
+  };
+}
+
 describe('createChildUseCase', () => {
   it('creates a valid child and saves it through the repository', async () => {
     const childRepository = new FakeChildRepository();
 
     const child = await createChildUseCase(
-      { childRepository, childIdGenerator: createIdGenerator('generated-child-id') },
+      createDependencies(childRepository),
       { displayName: 'Kim', dateOfBirth: '2025-01-10' },
       asOf,
     );
@@ -41,7 +72,7 @@ describe('createChildUseCase', () => {
     const childRepository = new FakeChildRepository();
 
     const child = await createChildUseCase(
-      { childRepository, childIdGenerator: createIdGenerator('generated-child-id') },
+      createDependencies(childRepository),
       { displayName: '  Kim  ', dateOfBirth: '2025-01-10' },
       asOf,
     );
@@ -53,7 +84,7 @@ describe('createChildUseCase', () => {
     const childRepository = new FakeChildRepository();
 
     const child = await createChildUseCase(
-      { childRepository, childIdGenerator: createIdGenerator('generated-child-id') },
+      createDependencies(childRepository),
       { displayName: 'Kim', dateOfBirth: '2025-01-10' },
       asOf,
     );
@@ -66,7 +97,7 @@ describe('createChildUseCase', () => {
 
     await expect(
       createChildUseCase(
-        { childRepository, childIdGenerator: createIdGenerator('generated-child-id') },
+        createDependencies(childRepository),
         { displayName: '   ', dateOfBirth: '2025-01-10' },
         asOf,
       ),
@@ -79,11 +110,35 @@ describe('createChildUseCase', () => {
 
     await expect(
       createChildUseCase(
-        { childRepository, childIdGenerator: createIdGenerator('generated-child-id') },
+        createDependencies(childRepository),
         { displayName: 'Kim', dateOfBirth: '2025-06-16' },
         asOf,
       ),
     ).rejects.toThrow(RangeError);
     expect(childRepository.savedChildren).toHaveLength(0);
+  });
+
+  it('sets the first created child active without replacing an existing selection', async () => {
+    const childRepository = new FakeChildRepository();
+    const activeChildRepository = new FakeActiveChildRepository();
+    const dependencies = {
+      activeChildRepository,
+      childRepository,
+      childIdGenerator: createIdGenerator('first-child'),
+    };
+
+    await createChildUseCase(
+      dependencies,
+      { displayName: 'First', dateOfBirth: '2025-01-10' },
+      asOf,
+    );
+    expect(activeChildRepository.activeChildId).toBe('first-child');
+
+    await createChildUseCase(
+      { ...dependencies, childIdGenerator: createIdGenerator('second-child') },
+      { displayName: 'Second', dateOfBirth: '2025-02-10' },
+      asOf,
+    );
+    expect(activeChildRepository.activeChildId).toBe('first-child');
   });
 });

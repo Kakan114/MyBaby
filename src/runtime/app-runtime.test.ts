@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ActiveChildRepository } from '../features/children/application/active-child-repository';
+import { ActiveChildError } from '../features/children/application/active-child';
 import type { ChildRepository } from '../features/children/application/child-repository';
 import { createCalendarDate } from '../features/children/domain/calendar-date';
 import type { Child } from '../features/children/domain/child';
@@ -22,6 +24,22 @@ class FakeChildRepository implements ChildRepository {
   });
 }
 
+class FakeActiveChildRepository implements ActiveChildRepository {
+  activeChildId: string | null = null;
+  readonly getActiveChildId = vi.fn(async () => this.activeChildId);
+  readonly setActiveChildId = vi.fn(async (id: string) => {
+    this.activeChildId = id;
+  });
+  readonly setActiveChildIdIfUnset = vi.fn(async (id: string) => {
+    this.activeChildId ??= id;
+  });
+  readonly clearActiveChildIdIfMatches = vi.fn(async (id: string) => {
+    if (this.activeChildId === id) {
+      this.activeChildId = null;
+    }
+  });
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -37,16 +55,27 @@ function createRuntimeFixture(options?: {
   openDatabase?: () => Promise<FakeDatabase>;
 }) {
   const database = new FakeDatabase();
+  const activeChildRepository = new FakeActiveChildRepository();
   const childRepository = new FakeChildRepository();
   const openDatabase = vi.fn(options?.openDatabase ?? (async () => database));
   const createChildRepository = vi.fn(() => childRepository);
+  const createActiveChildRepository = vi.fn(() => activeChildRepository);
   const runtime = createAppRuntime({
     openDatabase,
+    createActiveChildRepository,
     createChildRepository,
     childIdGenerator: { generate: () => 'generated-child-id' },
   });
 
-  return { database, childRepository, createChildRepository, openDatabase, runtime };
+  return {
+    database,
+    activeChildRepository,
+    childRepository,
+    createActiveChildRepository,
+    createChildRepository,
+    openDatabase,
+    runtime,
+  };
 }
 
 const asOf = createCalendarDate('2025-06-15');
@@ -56,6 +85,7 @@ describe('application runtime', () => {
     const fixture = createRuntimeFixture();
 
     expect(fixture.openDatabase).not.toHaveBeenCalled();
+    expect(fixture.createActiveChildRepository).not.toHaveBeenCalled();
     expect(fixture.createChildRepository).not.toHaveBeenCalled();
   });
 
@@ -77,6 +107,7 @@ describe('application runtime', () => {
     await expect(createPromise).resolves.toMatchObject({ id: 'generated-child-id' });
     await expect(getPromise).resolves.toBeNull();
     expect(fixture.createChildRepository).toHaveBeenCalledOnce();
+    expect(fixture.createActiveChildRepository).toHaveBeenCalledOnce();
   });
 
   it('reuses the initialized repository and connection', async () => {
@@ -104,6 +135,7 @@ describe('application runtime', () => {
       dateOfBirth: '2025-01-10',
     });
     expect(fixture.childRepository.save).toHaveBeenCalledWith(child);
+    expect(fixture.activeChildRepository.activeChildId).toBe(child.id);
   });
 
   it('delegates child retrieval to the repository through the use case', async () => {
@@ -144,6 +176,7 @@ describe('application runtime', () => {
     const childRepository = new FakeChildRepository();
     const runtime = createAppRuntime({
       openDatabase,
+      createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => childRepository,
       childIdGenerator: { generate: () => 'generated-child-id' },
     });
@@ -159,6 +192,7 @@ describe('application runtime', () => {
     const database = new FakeDatabase();
     const runtime = createAppRuntime({
       openDatabase: async () => database,
+      createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => {
         throw new Error('repository construction exposed native details');
       },
@@ -190,6 +224,7 @@ describe('application runtime', () => {
     const database = new FakeDatabase();
     const runtime = createAppRuntime({
       openDatabase: async () => database,
+      createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => new FakeChildRepository(),
       childIdGenerator: {
         generate: () => {
@@ -218,6 +253,74 @@ describe('application runtime', () => {
 
     expect(error).toMatchObject({ code: 'local-data-unavailable' });
     expect(String(error)).not.toContain('database path');
+  });
+
+  it('gets and explicitly sets the active child through application behavior', async () => {
+    const fixture = createRuntimeFixture();
+    const child: Child = {
+      id: 'existing-child',
+      displayName: 'Kim',
+      dateOfBirth: createCalendarDate('2025-01-10'),
+    };
+    fixture.childRepository.children.set(child.id, child);
+
+    await expect(fixture.runtime.children.getActiveChild()).resolves.toBeNull();
+    await expect(
+      fixture.runtime.children.setActiveChild(child.id),
+    ).resolves.toBe(child);
+    await expect(fixture.runtime.children.getActiveChild()).resolves.toBe(child);
+  });
+
+  it('preserves child-not-found as an application error', async () => {
+    const fixture = createRuntimeFixture();
+
+    const error = await fixture.runtime.children
+      .setActiveChild('missing-child')
+      .catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(ActiveChildError);
+    expect(error).toMatchObject({ code: 'child-not-found' });
+    expect(error).not.toBeInstanceOf(AppRuntimeError);
+  });
+
+  it('sanitizes active-child persistence failures', async () => {
+    const fixture = createRuntimeFixture();
+    fixture.activeChildRepository.getActiveChildId.mockRejectedValueOnce(
+      new Error('raw SQLite active-child error'),
+    );
+
+    const error = await fixture.runtime.children
+      .getActiveChild()
+      .catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ code: 'local-data-unavailable' });
+    expect(String(error)).not.toContain('active-child error');
+  });
+
+  it('tracks an active-child operation during shutdown', async () => {
+    const fixture = createRuntimeFixture();
+    const operationStarted = createDeferred<void>();
+    const activeChildResult = createDeferred<string | null>();
+    fixture.activeChildRepository.getActiveChildId.mockImplementationOnce(
+      async () => {
+        operationStarted.resolve();
+        return activeChildResult.promise;
+      },
+    );
+
+    const operation = fixture.runtime.children.getActiveChild();
+    await operationStarted.promise;
+
+    const closePromise = fixture.runtime.close();
+    expect(fixture.database.closeAsync).not.toHaveBeenCalled();
+    await expect(
+      fixture.runtime.children.setActiveChild('new-operation'),
+    ).rejects.toMatchObject({ code: 'runtime-closed' });
+
+    activeChildResult.resolve(null);
+    await expect(operation).resolves.toBeNull();
+    await closePromise;
+    expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
   });
 
   it('keeps the database open after successful operations', async () => {

@@ -1,4 +1,4 @@
-export const LATEST_LOCAL_DATABASE_VERSION = 1;
+export const LATEST_LOCAL_DATABASE_VERSION = 2;
 
 export interface LocalMigrationTransaction {
   execAsync(source: string): Promise<void>;
@@ -41,6 +41,15 @@ const migrations: readonly Migration[] = [
             AND date_of_birth GLOB
               '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
           )
+      );
+    `);
+  },
+  async (transaction) => {
+    await transaction.execAsync(`
+      CREATE TABLE active_child_selection (
+        id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+        child_id TEXT NOT NULL,
+        FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
       );
     `);
   },

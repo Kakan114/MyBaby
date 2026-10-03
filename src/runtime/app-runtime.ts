@@ -1,3 +1,8 @@
+import type { ActiveChildRepository } from '../features/children/application/active-child-repository';
+import {
+  getActiveChild as getActiveChildUseCase,
+  setActiveChild as setActiveChildUseCase,
+} from '../features/children/application/active-child';
 import type { ChildIdGenerator } from '../features/children/application/child-id-generator';
 import type { ChildRepository } from '../features/children/application/child-repository';
 import {
@@ -11,6 +16,8 @@ import type { Child } from '../features/children/domain/child';
 export type ChildrenRuntime = Readonly<{
   createChild(request: CreateChildRequest, asOf: CalendarDate): Promise<Child>;
   getChildById(id: string): Promise<Child | null>;
+  getActiveChild(): Promise<Child | null>;
+  setActiveChild(id: string): Promise<Child>;
 }>;
 
 export type AppRuntime = Readonly<{
@@ -37,14 +44,54 @@ export interface RuntimeDatabaseConnection {
 
 export type AppRuntimeDependencies<TDatabase extends RuntimeDatabaseConnection> = Readonly<{
   openDatabase(): Promise<TDatabase>;
+  createActiveChildRepository(database: TDatabase): ActiveChildRepository;
   createChildRepository(database: TDatabase): ChildRepository;
   childIdGenerator: ChildIdGenerator;
 }>;
 
 type InitializedRuntime<TDatabase extends RuntimeDatabaseConnection> = Readonly<{
   database: TDatabase;
+  activeChildRepository: ActiveChildRepository;
   childRepository: ChildRepository;
 }>;
+
+function sanitizeActiveChildRepository(
+  repository: ActiveChildRepository,
+): ActiveChildRepository {
+  return {
+    async getActiveChildId() {
+      try {
+        return await repository.getActiveChildId();
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+
+    async setActiveChildId(id) {
+      try {
+        await repository.setActiveChildId(id);
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+
+    async setActiveChildIdIfUnset(id) {
+      try {
+        await repository.setActiveChildIdIfUnset(id);
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+
+    async clearActiveChildIdIfMatches(id) {
+      try {
+        await repository.clearActiveChildIdIfMatches(id);
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+  };
+}
 
 function sanitizeChildRepository(repository: ChildRepository): ChildRepository {
   return {
@@ -124,8 +171,12 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       }
 
       let childRepository: ChildRepository;
+      let activeChildRepository: ActiveChildRepository;
 
       try {
+        activeChildRepository = sanitizeActiveChildRepository(
+          dependencies.createActiveChildRepository(database),
+        );
         childRepository = sanitizeChildRepository(
           dependencies.createChildRepository(database),
         );
@@ -139,7 +190,11 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         throw new AppRuntimeError('runtime-closed');
       }
 
-      initializedRuntime = { database, childRepository };
+      initializedRuntime = {
+        database,
+        activeChildRepository,
+        childRepository,
+      };
       return initializedRuntime;
     })();
 
@@ -178,10 +233,10 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   const children: ChildrenRuntime = {
     createChild(request, asOf) {
       return runOperation(async () => {
-        const { childRepository } = await initialize();
+        const { activeChildRepository, childRepository } = await initialize();
 
         return createChildUseCase(
-          { childRepository, childIdGenerator },
+          { activeChildRepository, childRepository, childIdGenerator },
           request,
           asOf,
         );
@@ -193,6 +248,25 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         const { childRepository } = await initialize();
 
         return getChildByIdUseCase(childRepository, id);
+      });
+    },
+
+    getActiveChild() {
+      return runOperation(async () => {
+        const { activeChildRepository, childRepository } = await initialize();
+
+        return getActiveChildUseCase({ activeChildRepository, childRepository });
+      });
+    },
+
+    setActiveChild(id) {
+      return runOperation(async () => {
+        const { activeChildRepository, childRepository } = await initialize();
+
+        return setActiveChildUseCase(
+          { activeChildRepository, childRepository },
+          id,
+        );
       });
     },
   };

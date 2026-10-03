@@ -23,6 +23,7 @@ MyBaby uses feature-based modules with an inward dependency direction. Add code 
 - Domain code must remain framework-independent. It must not import React, React Native, Expo, SQLite, Supabase, or other infrastructure libraries.
 - Shared data infrastructure and app-wide services must not become homes for feature-specific business logic.
 - `AppRuntime` owns shared infrastructure lifecycles. Feature runtime APIs delegate to application use cases rather than duplicating their rules.
+- Persisted application preferences such as active-child selection remain canonical in encrypted local storage; React contexts expose behavior but are not competing sources of truth.
 - Avoid circular dependencies. Prefer direct imports; add a barrel (`index.ts`) only when it defines a deliberate public API, not by default.
 
 ## Data protection and security
