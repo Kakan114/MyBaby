@@ -1,12 +1,16 @@
 # Encrypted local persistence foundation
 
-MyBaby's first real local database must use SQLCipher. `openLocalDatabase()` obtains a 256-bit key from SecureStore, opens the database, applies the key before any read, verification, initialization, migration, or repository operation, verifies access, and then enables foreign-key enforcement.
+MyBaby's local `mybaby.db` database uses SQLCipher. `openLocalDatabase()` obtains a 256-bit key from SecureStore, opens the database, applies the key before any read, verifies encrypted access, enables foreign-key enforcement, and applies pending product-schema migrations before returning the shared connection.
 
 The key is stored as exactly 64 lowercase hexadecimal characters. SecureStore uses the stable service `mybaby.local-database-key`; on iOS the item is configured as `WHEN_UNLOCKED_THIS_DEVICE_ONLY`. Platform backup exclusions and the final multi-account strategy remain open ADR follow-ups and are not implemented here.
 
 SQLCipher is not available in Expo Go. This persistence path requires an iOS/Android development build or production build with the `expo-sqlite` config plugin and `useSQLCipher: true`.
 
-No product schema, migrations, repositories, synchronization, or secure-purge behavior exists yet. Native verification must prove on physical iOS and Android development builds that:
+Product-schema migrations use `PRAGMA user_version`, run sequentially in exclusive transactions, and advance the version only inside the successful transaction. Schema version 1 creates only the `children` table. A newer unsupported version or any migration failure aborts initialization, closes the opened connection, and returns a sanitized error; the database is never automatically deleted or recreated.
+
+The synthetic `__mybaby_sqlcipher_verification` table remains outside the product schema and migrations. It belongs only to the development verification harness and is neither modified nor removed by product migrations.
+
+Native verification must prove on physical iOS and Android development builds that:
 
 - the database opens after app restart with the stored key;
 - the file cannot be opened as plaintext SQLite;
