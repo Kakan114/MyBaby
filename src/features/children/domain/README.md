@@ -1,6 +1,6 @@
 # Children domain
 
-This framework-independent domain currently owns the minimal `Child` entity, calendar-date validation, and deterministic age calculations. It must not import React, React Native, Expo, Supabase, or SQLite.
+This framework-independent domain currently owns the minimal `Child` entity, calendar-date validation, and deterministic age calculations. Child-creation validation exposes stable codes for invalid display names, malformed calendar dates, and future birth dates without relying on error-message matching. It must not import React, React Native, Expo, Supabase, or SQLite.
 
 `dateOfBirth` uses a validated branded `CalendarDate` string in canonical `YYYY-MM-DD` form. It represents a calendar date, not an instant or timezone. UTC is used only internally to count whole date boundaries, so device timezone changes cannot shift the stored birth date.
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createCalendarDate } from '../domain/calendar-date';
-import type { Child } from '../domain/child';
+import { ChildValidationError, type Child } from '../domain/child';
 import type { ActiveChildRepository } from './active-child-repository';
 import type { ChildIdGenerator } from './child-id-generator';
 import type { ChildRepository } from './child-repository';
@@ -12,6 +12,10 @@ class FakeChildRepository implements ChildRepository {
 
   async getById(id: string): Promise<Child | null> {
     return this.savedChildren.find((child) => child.id === id) ?? null;
+  }
+
+  async hasChildren(): Promise<boolean> {
+    return this.savedChildren.length > 0;
   }
 
   async save(child: Child): Promise<void> {
@@ -95,26 +99,28 @@ describe('createChildUseCase', () => {
   it('does not save a child rejected by domain validation', async () => {
     const childRepository = new FakeChildRepository();
 
-    await expect(
-      createChildUseCase(
-        createDependencies(childRepository),
-        { displayName: '   ', dateOfBirth: '2025-01-10' },
-        asOf,
-      ),
-    ).rejects.toThrow(TypeError);
+    const error = await createChildUseCase(
+      createDependencies(childRepository),
+      { displayName: '   ', dateOfBirth: '2025-01-10' },
+      asOf,
+    ).catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(ChildValidationError);
+    expect(error).toMatchObject({ code: 'invalid-display-name' });
     expect(childRepository.savedChildren).toHaveLength(0);
   });
 
   it('does not save a child with a future date of birth', async () => {
     const childRepository = new FakeChildRepository();
 
-    await expect(
-      createChildUseCase(
-        createDependencies(childRepository),
-        { displayName: 'Kim', dateOfBirth: '2025-06-16' },
-        asOf,
-      ),
-    ).rejects.toThrow(RangeError);
+    const error = await createChildUseCase(
+      createDependencies(childRepository),
+      { displayName: 'Kim', dateOfBirth: '2025-06-16' },
+      asOf,
+    ).catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(ChildValidationError);
+    expect(error).toMatchObject({ code: 'future-date-of-birth' });
     expect(childRepository.savedChildren).toHaveLength(0);
   });
 

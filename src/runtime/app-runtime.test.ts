@@ -3,8 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActiveChildRepository } from '../features/children/application/active-child-repository';
 import { ActiveChildError } from '../features/children/application/active-child';
 import type { ChildRepository } from '../features/children/application/child-repository';
-import { createCalendarDate } from '../features/children/domain/calendar-date';
-import type { Child } from '../features/children/domain/child';
+import {
+  CalendarDateValidationError,
+  createCalendarDate,
+  type CalendarDate,
+} from '../features/children/domain/calendar-date';
+import {
+  ChildValidationError,
+  type Child,
+} from '../features/children/domain/child';
 
 import {
   AppRuntimeError,
@@ -19,6 +26,7 @@ class FakeDatabase implements RuntimeDatabaseConnection {
 class FakeChildRepository implements ChildRepository {
   readonly children = new Map<string, Child>();
   readonly getById = vi.fn(async (id: string) => this.children.get(id) ?? null);
+  readonly hasChildren = vi.fn(async () => this.children.size > 0);
   readonly save = vi.fn(async (child: Child) => {
     this.children.set(child.id, child);
   });
@@ -53,6 +61,7 @@ function createDeferred<T>() {
 
 function createRuntimeFixture(options?: {
   openDatabase?: () => Promise<FakeDatabase>;
+  getCurrentCalendarDate?: () => CalendarDate;
 }) {
   const database = new FakeDatabase();
   const activeChildRepository = new FakeActiveChildRepository();
@@ -65,6 +74,7 @@ function createRuntimeFixture(options?: {
     createActiveChildRepository,
     createChildRepository,
     childIdGenerator: { generate: () => 'generated-child-id' },
+    getCurrentCalendarDate: options?.getCurrentCalendarDate ?? (() => asOf),
   });
 
   return {
@@ -97,7 +107,6 @@ describe('application runtime', () => {
 
     const createPromise = fixture.runtime.children.createChild(
       { displayName: 'Kim', dateOfBirth: '2025-01-10' },
-      asOf,
     );
     const getPromise = fixture.runtime.children.getChildById('missing-child');
 
@@ -126,7 +135,6 @@ describe('application runtime', () => {
 
     const child = await fixture.runtime.children.createChild(
       { displayName: '  Kim  ', dateOfBirth: '2025-01-10' },
-      asOf,
     );
 
     expect(child).toEqual({
@@ -179,6 +187,7 @@ describe('application runtime', () => {
       createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => childRepository,
       childIdGenerator: { generate: () => 'generated-child-id' },
+      getCurrentCalendarDate: () => asOf,
     });
 
     await expect(runtime.children.getChildById('child')).rejects.toMatchObject({
@@ -197,6 +206,7 @@ describe('application runtime', () => {
         throw new Error('repository construction exposed native details');
       },
       childIdGenerator: { generate: () => 'generated-child-id' },
+      getCurrentCalendarDate: () => asOf,
     });
 
     const error = await runtime.children
@@ -212,12 +222,58 @@ describe('application runtime', () => {
     const fixture = createRuntimeFixture();
 
     const error = await fixture.runtime.children
-      .createChild({ displayName: '   ', dateOfBirth: '2025-01-10' }, asOf)
+      .createChild({ displayName: '   ', dateOfBirth: '2025-01-10' })
       .catch((reason: unknown) => reason);
 
-    expect(error).toBeInstanceOf(TypeError);
+    expect(error).toBeInstanceOf(ChildValidationError);
+    expect(error).toMatchObject({ code: 'invalid-display-name' });
     expect(error).not.toBeInstanceOf(AppRuntimeError);
     expect(fixture.childRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('preserves malformed and future date validation codes', async () => {
+    const fixture = createRuntimeFixture();
+
+    const malformed = await fixture.runtime.children
+      .createChild({ displayName: 'Kim', dateOfBirth: 'not-a-date' })
+      .catch((reason: unknown) => reason);
+    const future = await fixture.runtime.children
+      .createChild({ displayName: 'Kim', dateOfBirth: '2025-06-16' })
+      .catch((reason: unknown) => reason);
+
+    expect(malformed).toBeInstanceOf(CalendarDateValidationError);
+    expect(malformed).toMatchObject({ code: 'invalid-calendar-date' });
+    expect(future).toBeInstanceOf(ChildValidationError);
+    expect(future).toMatchObject({ code: 'future-date-of-birth' });
+  });
+
+  it('supplies the current local calendar date to child creation', async () => {
+    const getCurrentCalendarDate = vi.fn(() => createCalendarDate('2025-01-10'));
+    const fixture = createRuntimeFixture({ getCurrentCalendarDate });
+
+    await expect(
+      fixture.runtime.children.createChild({
+        displayName: 'Kim',
+        dateOfBirth: '2025-01-10',
+      }),
+    ).resolves.toMatchObject({ dateOfBirth: '2025-01-10' });
+    expect(getCurrentCalendarDate).toHaveBeenCalledOnce();
+  });
+
+  it('sanitizes current local calendar date infrastructure failures', async () => {
+    const fixture = createRuntimeFixture({
+      getCurrentCalendarDate: () => {
+        throw new Error('raw system date failure');
+      },
+    });
+
+    const error = await fixture.runtime.children
+      .createChild({ displayName: 'Kim', dateOfBirth: '2025-01-10' })
+      .catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(AppRuntimeError);
+    expect(error).toMatchObject({ code: 'local-data-unavailable' });
+    expect(String(error)).not.toContain('system date');
   });
 
   it('sanitizes child ID generator infrastructure failures', async () => {
@@ -231,10 +287,11 @@ describe('application runtime', () => {
           throw new Error('raw native UUID failure');
         },
       },
+      getCurrentCalendarDate: () => asOf,
     });
 
     const error = await runtime.children
-      .createChild({ displayName: 'Kim', dateOfBirth: '2025-01-10' }, asOf)
+      .createChild({ displayName: 'Kim', dateOfBirth: '2025-01-10' })
       .catch((reason: unknown) => reason);
 
     expect(error).toMatchObject({ code: 'local-data-unavailable' });
@@ -269,6 +326,45 @@ describe('application runtime', () => {
       fixture.runtime.children.setActiveChild(child.id),
     ).resolves.toBe(child);
     await expect(fixture.runtime.children.getActiveChild()).resolves.toBe(child);
+  });
+
+  it('exposes the application bootstrap decision', async () => {
+    const fixture = createRuntimeFixture();
+
+    await expect(fixture.runtime.children.getBootstrapStatus()).resolves.toEqual({
+      status: 'onboarding-required',
+    });
+
+    const child: Child = {
+      id: 'existing-child',
+      displayName: 'Kim',
+      dateOfBirth: createCalendarDate('2025-01-10'),
+    };
+    fixture.childRepository.children.set(child.id, child);
+
+    await expect(fixture.runtime.children.getBootstrapStatus()).resolves.toEqual({
+      status: 'active-selection-required',
+    });
+
+    fixture.activeChildRepository.activeChildId = child.id;
+    await expect(fixture.runtime.children.getBootstrapStatus()).resolves.toEqual({
+      status: 'ready',
+    });
+  });
+
+  it('sanitizes bootstrap existence-query failures', async () => {
+    const fixture = createRuntimeFixture();
+    fixture.childRepository.hasChildren.mockRejectedValueOnce(
+      new Error('raw SQLite existence failure'),
+    );
+
+    const error = await fixture.runtime.children
+      .getBootstrapStatus()
+      .catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(AppRuntimeError);
+    expect(error).toMatchObject({ code: 'local-data-unavailable' });
+    expect(String(error)).not.toContain('existence failure');
   });
 
   it('preserves child-not-found as an application error', async () => {
@@ -319,6 +415,61 @@ describe('application runtime', () => {
 
     activeChildResult.resolve(null);
     await expect(operation).resolves.toBeNull();
+    await closePromise;
+    expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
+  });
+
+  it('tracks a pending bootstrap operation during shutdown', async () => {
+    const fixture = createRuntimeFixture();
+    const existenceResult = createDeferred<boolean>();
+    fixture.childRepository.hasChildren.mockImplementationOnce(
+      () => existenceResult.promise,
+    );
+
+    const operation = fixture.runtime.children.getBootstrapStatus();
+    await vi.waitFor(() => {
+      expect(fixture.childRepository.hasChildren).toHaveBeenCalledOnce();
+    });
+
+    const closePromise = fixture.runtime.close();
+    expect(fixture.database.closeAsync).not.toHaveBeenCalled();
+    await expect(
+      fixture.runtime.children.getBootstrapStatus(),
+    ).rejects.toMatchObject({ code: 'runtime-closed' });
+
+    existenceResult.resolve(false);
+    await expect(operation).resolves.toEqual({ status: 'onboarding-required' });
+    await closePromise;
+    expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
+  });
+
+  it('tracks child creation during shutdown', async () => {
+    const fixture = createRuntimeFixture();
+    const saveStarted = createDeferred<void>();
+    const saveResult = createDeferred<void>();
+    fixture.childRepository.save.mockImplementationOnce(async (child) => {
+      saveStarted.resolve();
+      await saveResult.promise;
+      fixture.childRepository.children.set(child.id, child);
+    });
+
+    const operation = fixture.runtime.children.createChild({
+      displayName: 'Kim',
+      dateOfBirth: '2025-01-10',
+    });
+    await saveStarted.promise;
+
+    const closePromise = fixture.runtime.close();
+    expect(fixture.database.closeAsync).not.toHaveBeenCalled();
+    await expect(
+      fixture.runtime.children.createChild({
+        displayName: 'New work',
+        dateOfBirth: '2025-01-10',
+      }),
+    ).rejects.toMatchObject({ code: 'runtime-closed' });
+
+    saveResult.resolve();
+    await expect(operation).resolves.toMatchObject({ id: 'generated-child-id' });
     await closePromise;
     expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
   });

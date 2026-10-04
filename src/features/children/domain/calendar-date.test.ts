@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createCalendarDate, getCalendarDateParts } from './calendar-date';
+import {
+  CalendarDateValidationError,
+  createCalendarDate,
+  getCalendarDateParts,
+} from './calendar-date';
 
 describe('CalendarDate', () => {
   it('accepts and parses a valid leap day', () => {
@@ -11,6 +15,26 @@ describe('CalendarDate', () => {
   });
 
   it('rejects 29 February in a non-leap year', () => {
-    expect(() => createCalendarDate('2025-02-29')).toThrow(RangeError);
+    const error = captureError(() => createCalendarDate('2025-02-29'));
+
+    expect(error).toBeInstanceOf(CalendarDateValidationError);
+    expect(error).toMatchObject({ code: 'invalid-calendar-date' });
+  });
+
+  it('rejects malformed input with a stable code', () => {
+    const error = captureError(() => createCalendarDate('02/29/2024'));
+
+    expect(error).toBeInstanceOf(CalendarDateValidationError);
+    expect(error).toMatchObject({ code: 'invalid-calendar-date' });
   });
 });
+
+function captureError(action: () => unknown): unknown {
+  try {
+    action();
+  } catch (error) {
+    return error;
+  }
+
+  throw new Error('Expected action to throw.');
+}

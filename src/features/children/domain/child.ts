@@ -16,6 +16,21 @@ export type CreateChildInput = Readonly<{
   dateOfBirth: string;
 }>;
 
+export type ChildValidationErrorCode =
+  | 'invalid-display-name'
+  | 'future-date-of-birth';
+
+export class ChildValidationError extends Error {
+  constructor(readonly code: ChildValidationErrorCode) {
+    super(
+      code === 'invalid-display-name'
+        ? 'Child display name must not be empty.'
+        : 'Child date of birth must not be after the reference date.',
+    );
+    this.name = 'ChildValidationError';
+  }
+}
+
 export function createChild(input: CreateChildInput, asOf: CalendarDate): Child {
   if (input.id.trim().length === 0) {
     throw new TypeError('Child id must not be empty.');
@@ -24,13 +39,13 @@ export function createChild(input: CreateChildInput, asOf: CalendarDate): Child 
   const displayName = input.displayName.trim();
 
   if (displayName.length === 0) {
-    throw new TypeError('Child display name must not be empty.');
+    throw new ChildValidationError('invalid-display-name');
   }
 
   const dateOfBirth = createCalendarDate(input.dateOfBirth);
 
   if (compareCalendarDates(dateOfBirth, asOf) > 0) {
-    throw new RangeError('Child date of birth must not be after the reference date.');
+    throw new ChildValidationError('future-date-of-birth');
   }
 
   return {

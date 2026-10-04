@@ -15,10 +15,18 @@ type ChildRow = {
   date_of_birth: string;
 };
 
+type ChildPresenceRow = { present: number };
+
 const SELECT_CHILD_BY_ID = `
   SELECT id, display_name, date_of_birth
   FROM children
   WHERE id = ?;
+`;
+
+const SELECT_ANY_CHILD = `
+  SELECT 1 AS present
+  FROM children
+  LIMIT 1;
 `;
 
 const UPSERT_CHILD = `
@@ -44,6 +52,15 @@ export class SqliteChildRepository implements ChildRepository {
     const row = await this.database.getFirstAsync<ChildRow>(SELECT_CHILD_BY_ID, [id]);
 
     return row === null ? null : mapChildRow(row);
+  }
+
+  async hasChildren(): Promise<boolean> {
+    const row = await this.database.getFirstAsync<ChildPresenceRow>(
+      SELECT_ANY_CHILD,
+      [],
+    );
+
+    return row !== null;
   }
 
   async save(child: Child): Promise<void> {

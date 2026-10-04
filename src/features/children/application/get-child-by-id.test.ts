@@ -12,6 +12,10 @@ class FakeChildRepository implements ChildRepository {
     return this.children.find((child) => child.id === id) ?? null;
   }
 
+  async hasChildren(): Promise<boolean> {
+    return this.children.length > 0;
+  }
+
   async save(child: Child): Promise<void> {
     this.children.push(child);
   }

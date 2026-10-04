@@ -1,5 +1,6 @@
 import { openLocalDatabase } from '../data/local/open-local-database';
 import { ExpoChildIdGenerator } from '../features/children/data/expo-child-id-generator';
+import { getCurrentLocalCalendarDate } from '../features/children/data/local-calendar-date';
 import { SqliteActiveChildRepository } from '../features/children/data/sqlite-active-child-repository';
 import { SqliteChildRepository } from '../features/children/data/sqlite-child-repository';
 
@@ -12,5 +13,6 @@ export function createProductionAppRuntime(): AppRuntime {
       new SqliteActiveChildRepository(database),
     createChildRepository: (database) => new SqliteChildRepository(database),
     childIdGenerator: new ExpoChildIdGenerator(),
+    getCurrentCalendarDate: getCurrentLocalCalendarDate,
   });
 }

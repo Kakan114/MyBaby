@@ -13,6 +13,15 @@ export type CalendarDateParts = Readonly<{
   day: number;
 }>;
 
+export type CalendarDateValidationErrorCode = 'invalid-calendar-date';
+
+export class CalendarDateValidationError extends RangeError {
+  constructor(readonly code: CalendarDateValidationErrorCode) {
+    super('Calendar date must be a valid date in the YYYY-MM-DD format.');
+    this.name = 'CalendarDateValidationError';
+  }
+}
+
 function isLeapYear(year: number): boolean {
   return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 }
@@ -27,7 +36,7 @@ export function getCalendarDateParts(value: CalendarDate | string): CalendarDate
   const match = CALENDAR_DATE_PATTERN.exec(value);
 
   if (!match) {
-    throw new RangeError('Calendar date must use the YYYY-MM-DD format.');
+    throw new CalendarDateValidationError('invalid-calendar-date');
   }
 
   const [, yearText, monthText, dayText] = match;
@@ -36,7 +45,7 @@ export function getCalendarDateParts(value: CalendarDate | string): CalendarDate
   const day = Number(dayText);
 
   if (year < 1 || month < 1 || month > 12 || day < 1 || day > getDaysInMonth(year, month)) {
-    throw new RangeError(`Invalid calendar date: ${value}.`);
+    throw new CalendarDateValidationError('invalid-calendar-date');
   }
 
   return { year, month, day };

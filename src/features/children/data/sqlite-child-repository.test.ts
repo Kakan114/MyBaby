@@ -20,6 +20,11 @@ class FakeChildDatabase implements ChildRepositoryDatabase {
 
   async getFirstAsync<T>(source: string, params: unknown[]): Promise<T | null> {
     this.reads.push({ source, params });
+
+    if (source.includes('SELECT 1 AS present')) {
+      return (this.rows.size > 0 ? { present: 1 } : null) as T | null;
+    }
+
     return (this.rows.get(String(params[0])) ?? null) as T | null;
   }
 
@@ -76,6 +81,32 @@ describe('SQLite child repository', () => {
     const repository = new SqliteChildRepository(database);
 
     await expect(repository.getById(child.id)).rejects.toThrow(RangeError);
+  });
+
+  it('reports no children with a minimal existence query', async () => {
+    const database = new FakeChildDatabase();
+    const repository = new SqliteChildRepository(database);
+
+    await expect(repository.hasChildren()).resolves.toBe(false);
+    expect(database.reads[0].params).toEqual([]);
+    expect(database.reads[0].source).toContain('SELECT 1 AS present');
+    expect(database.reads[0].source).toContain('FROM children');
+    expect(database.reads[0].source).toContain('LIMIT 1');
+    expect(database.reads[0].source).not.toMatch(/COUNT\s*\(/i);
+  });
+
+  it('reports that at least one child exists without loading child fields', async () => {
+    const database = new FakeChildDatabase();
+    database.rows.set(child.id, {
+      id: child.id,
+      display_name: child.displayName,
+      date_of_birth: child.dateOfBirth,
+    });
+    const repository = new SqliteChildRepository(database);
+
+    await expect(repository.hasChildren()).resolves.toBe(true);
+    expect(database.reads[0].source).not.toContain('display_name');
+    expect(database.reads[0].source).not.toContain('date_of_birth');
   });
 
   it('upserts by ID using bound values and only the three Child fields', async () => {

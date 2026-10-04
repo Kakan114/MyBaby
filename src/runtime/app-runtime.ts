@@ -10,11 +10,16 @@ import {
   type CreateChildRequest,
 } from '../features/children/application/create-child';
 import { getChildById as getChildByIdUseCase } from '../features/children/application/get-child-by-id';
+import {
+  getChildrenBootstrapStatus as getChildrenBootstrapStatusUseCase,
+  type ChildrenBootstrapStatus,
+} from '../features/children/application/get-children-bootstrap-status';
 import type { CalendarDate } from '../features/children/domain/calendar-date';
 import type { Child } from '../features/children/domain/child';
 
 export type ChildrenRuntime = Readonly<{
-  createChild(request: CreateChildRequest, asOf: CalendarDate): Promise<Child>;
+  createChild(request: CreateChildRequest): Promise<Child>;
+  getBootstrapStatus(): Promise<ChildrenBootstrapStatus>;
   getChildById(id: string): Promise<Child | null>;
   getActiveChild(): Promise<Child | null>;
   setActiveChild(id: string): Promise<Child>;
@@ -47,6 +52,7 @@ export type AppRuntimeDependencies<TDatabase extends RuntimeDatabaseConnection> 
   createActiveChildRepository(database: TDatabase): ActiveChildRepository;
   createChildRepository(database: TDatabase): ChildRepository;
   childIdGenerator: ChildIdGenerator;
+  getCurrentCalendarDate(): CalendarDate;
 }>;
 
 type InitializedRuntime<TDatabase extends RuntimeDatabaseConnection> = Readonly<{
@@ -98,6 +104,14 @@ function sanitizeChildRepository(repository: ChildRepository): ChildRepository {
     async getById(id) {
       try {
         return await repository.getById(id);
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+
+    async hasChildren() {
+      try {
+        return await repository.hasChildren();
       } catch {
         throw new AppRuntimeError('local-data-unavailable');
       }
@@ -231,15 +245,33 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   }
 
   const children: ChildrenRuntime = {
-    createChild(request, asOf) {
+    createChild(request) {
       return runOperation(async () => {
         const { activeChildRepository, childRepository } = await initialize();
+        let asOf: CalendarDate;
+
+        try {
+          asOf = dependencies.getCurrentCalendarDate();
+        } catch {
+          throw new AppRuntimeError('local-data-unavailable');
+        }
 
         return createChildUseCase(
           { activeChildRepository, childRepository, childIdGenerator },
           request,
           asOf,
         );
+      });
+    },
+
+    getBootstrapStatus() {
+      return runOperation(async () => {
+        const { activeChildRepository, childRepository } = await initialize();
+
+        return getChildrenBootstrapStatusUseCase({
+          activeChildRepository,
+          childRepository,
+        });
       });
     },
 
