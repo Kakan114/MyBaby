@@ -6,6 +6,25 @@ export const sv = {
     assistant: 'Assistent',
     family: 'Familj',
   },
+  bootstrap: {
+    checking: 'Förbereder MyBaby…',
+    retry: 'Försök igen',
+    localDataError: {
+      title: 'Det gick inte att öppna dina lokala data',
+      description: 'MyBaby kunde inte läsa dina sparade uppgifter. Försök igen.',
+    },
+    activeSelectionRequired: {
+      title: 'Ett barn behöver väljas',
+      description:
+        'Barnuppgifter finns sparade, men inget aktivt barn är valt. Försök igen.',
+    },
+  },
+  onboarding: {
+    placeholder: {
+      title: 'Skapa barnprofil',
+      description: 'I nästa steg lägger vi till formuläret för barnets profil.',
+    },
+  },
   screens: {
     today: {
       title: 'Idag',

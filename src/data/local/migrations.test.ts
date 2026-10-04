@@ -4,7 +4,6 @@ import {
   LATEST_LOCAL_DATABASE_VERSION,
   migrateLocalDatabase,
   type LocalMigrationDatabase,
-  type LocalMigrationTransaction,
 } from './migrations';
 
 class FakeMigrationDatabase implements LocalMigrationDatabase {
@@ -16,6 +15,7 @@ class FakeMigrationDatabase implements LocalMigrationDatabase {
   constructor(
     private version: number,
     private readonly failWhenStatementContains?: string,
+    private readonly failRollback = false,
   ) {}
 
   async getFirstAsync<T>(source: string): Promise<T | null> {
@@ -23,34 +23,46 @@ class FakeMigrationDatabase implements LocalMigrationDatabase {
     return { user_version: this.version } as T;
   }
 
-  async withExclusiveTransactionAsync(
-    task: (transaction: LocalMigrationTransaction) => Promise<void>,
-  ): Promise<void> {
-    this.transactionCount += 1;
-    let pendingVersion = this.version;
+  private pendingVersion: number | null = null;
 
-    const transaction: LocalMigrationTransaction = {
-      execAsync: async (source) => {
-        this.executedStatements.push(source);
+  async execAsync(source: string): Promise<void> {
+    this.executedStatements.push(source);
 
-        if (source.includes(this.failWhenStatementContains ?? '\u0000')) {
-          throw new Error('native error with sensitive details');
-        }
+    if (source === 'BEGIN IMMEDIATE;') {
+      this.transactionCount += 1;
+      this.pendingVersion = this.version;
+      return;
+    }
 
-        const versionMatch = source.match(/PRAGMA user_version = (\d+);/);
-        if (versionMatch) {
-          pendingVersion = Number(versionMatch[1]);
-        }
-      },
-    };
-
-    try {
-      await task(transaction);
-      this.version = pendingVersion;
-      this.committedTransactionCount += 1;
-    } catch (error) {
+    if (source === 'ROLLBACK;') {
       this.rolledBackTransactionCount += 1;
-      throw error;
+      this.pendingVersion = null;
+
+      if (this.failRollback) {
+        throw new Error('native rollback failure with sensitive details');
+      }
+
+      return;
+    }
+
+    if (source.includes(this.failWhenStatementContains ?? '\u0000')) {
+      throw new Error('native error with sensitive details');
+    }
+
+    const versionMatch = source.match(/PRAGMA user_version = (\d+);/);
+    if (versionMatch) {
+      this.pendingVersion = Number(versionMatch[1]);
+      return;
+    }
+
+    if (source === 'COMMIT;') {
+      if (this.pendingVersion === null) {
+        throw new Error('No active transaction.');
+      }
+
+      this.version = this.pendingVersion;
+      this.pendingVersion = null;
+      this.committedTransactionCount += 1;
     }
   }
 
@@ -69,21 +81,25 @@ describe('local database migrations', () => {
     expect(database.transactionCount).toBe(2);
     expect(database.committedTransactionCount).toBe(2);
     expect(database.rolledBackTransactionCount).toBe(0);
-    expect(database.executedStatements).toHaveLength(4);
-    expect(database.executedStatements[0]).toContain('CREATE TABLE children');
-    expect(database.executedStatements[0]).toContain('id TEXT PRIMARY KEY NOT NULL');
-    expect(database.executedStatements[0]).toContain(
+    expect(database.executedStatements).toHaveLength(8);
+    expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
+    expect(database.executedStatements[1]).toContain('CREATE TABLE children');
+    expect(database.executedStatements[1]).toContain('id TEXT PRIMARY KEY NOT NULL');
+    expect(database.executedStatements[1]).toContain(
       'display_name TEXT NOT NULL CHECK (length(trim(display_name)) > 0)',
     );
-    expect(database.executedStatements[0]).toContain("date_of_birth GLOB");
-    expect(database.executedStatements[0]).not.toContain(
+    expect(database.executedStatements[1]).toContain("date_of_birth GLOB");
+    expect(database.executedStatements[1]).not.toContain(
       '__mybaby_sqlcipher_verification',
     );
-    expect(database.executedStatements[1]).toBe('PRAGMA user_version = 1;');
-    expect(database.executedStatements[2]).toContain(
+    expect(database.executedStatements[2]).toBe('PRAGMA user_version = 1;');
+    expect(database.executedStatements[3]).toBe('COMMIT;');
+    expect(database.executedStatements[4]).toBe('BEGIN IMMEDIATE;');
+    expect(database.executedStatements[5]).toContain(
       'CREATE TABLE active_child_selection',
     );
-    expect(database.executedStatements[3]).toBe('PRAGMA user_version = 2;');
+    expect(database.executedStatements[6]).toBe('PRAGMA user_version = 2;');
+    expect(database.executedStatements[7]).toBe('COMMIT;');
   });
 
   it('migrates version 1 to version 2 without selecting an existing child', async () => {
@@ -93,8 +109,9 @@ describe('local database migrations', () => {
 
     expect(database.userVersion).toBe(2);
     expect(database.transactionCount).toBe(1);
-    expect(database.executedStatements).toHaveLength(2);
-    const schema = database.executedStatements[0];
+    expect(database.executedStatements).toHaveLength(4);
+    expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
+    const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE active_child_selection');
     expect(schema).toContain('id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1)');
     expect(schema).toContain('child_id TEXT NOT NULL');
@@ -107,7 +124,8 @@ describe('local database migrations', () => {
     expect(schema).not.toContain('user_id');
     expect(schema).not.toContain('account_id');
     expect(schema).not.toContain('sync');
-    expect(database.executedStatements[1]).toBe('PRAGMA user_version = 2;');
+    expect(database.executedStatements[2]).toBe('PRAGMA user_version = 2;');
+    expect(database.executedStatements[3]).toBe('COMMIT;');
   });
 
   it('does nothing when the database is already at version 2', async () => {
@@ -136,8 +154,48 @@ describe('local database migrations', () => {
     expect(database.userVersion).toBe(1);
     expect(database.committedTransactionCount).toBe(0);
     expect(database.rolledBackTransactionCount).toBe(1);
-    expect(database.executedStatements).toHaveLength(1);
+    expect(database.executedStatements).toHaveLength(3);
+    expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
+    expect(database.executedStatements[1]).toContain(
+      'CREATE TABLE active_child_selection',
+    );
+    expect(database.executedStatements[2]).toBe('ROLLBACK;');
     expect(error).toMatchObject({ code: 'migration-failed' });
     expect(String(error)).not.toContain('sensitive details');
+  });
+
+  it('rolls back the pending user_version when commit fails', async () => {
+    const database = new FakeMigrationDatabase(1, 'COMMIT;');
+
+    await expect(migrateLocalDatabase(database)).rejects.toMatchObject({
+      code: 'migration-failed',
+    });
+
+    expect(database.userVersion).toBe(1);
+    expect(database.committedTransactionCount).toBe(0);
+    expect(database.rolledBackTransactionCount).toBe(1);
+    expect(database.executedStatements.slice(-3)).toEqual([
+      'PRAGMA user_version = 2;',
+      'COMMIT;',
+      'ROLLBACK;',
+    ]);
+  });
+
+  it('does not let rollback failure replace the sanitized migration failure', async () => {
+    const database = new FakeMigrationDatabase(
+      1,
+      'CREATE TABLE active_child_selection',
+      true,
+    );
+
+    const error = await migrateLocalDatabase(database).catch(
+      (reason: unknown) => reason,
+    );
+
+    expect(database.userVersion).toBe(1);
+    expect(database.rolledBackTransactionCount).toBe(1);
+    expect(database.executedStatements.at(-1)).toBe('ROLLBACK;');
+    expect(error).toMatchObject({ code: 'migration-failed' });
+    expect(String(error)).not.toContain('rollback failure');
   });
 });

@@ -5,10 +5,8 @@ export interface LocalMigrationTransaction {
 }
 
 export interface LocalMigrationDatabase {
+  execAsync(source: string): Promise<void>;
   getFirstAsync<T>(source: string): Promise<T | null>;
-  withExclusiveTransactionAsync(
-    task: (transaction: LocalMigrationTransaction) => Promise<void>,
-  ): Promise<void>;
 }
 
 export type LocalDatabaseMigrationErrorCode =
@@ -85,12 +83,23 @@ export async function migrateLocalDatabase(database: LocalMigrationDatabase): Pr
       throw new LocalDatabaseMigrationError('migration-failed');
     }
 
+    let transactionStarted = false;
+
     try {
-      await database.withExclusiveTransactionAsync(async (transaction) => {
-        await migration(transaction);
-        await transaction.execAsync(`PRAGMA user_version = ${nextVersion};`);
-      });
+      await database.execAsync('BEGIN IMMEDIATE;');
+      transactionStarted = true;
+      await migration(database);
+      await database.execAsync(`PRAGMA user_version = ${nextVersion};`);
+      await database.execAsync('COMMIT;');
     } catch {
+      if (transactionStarted) {
+        try {
+          await database.execAsync('ROLLBACK;');
+        } catch {
+          // Preserve the migration failure; initialization will close the connection.
+        }
+      }
+
       throw new LocalDatabaseMigrationError('migration-failed');
     }
 

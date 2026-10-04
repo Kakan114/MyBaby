@@ -24,7 +24,6 @@ function createConnection(calls: string[]): LocalDatabaseConnection {
       return { count: 1 } as T;
     },
     closeAsync: vi.fn(async () => undefined),
-    withExclusiveTransactionAsync: vi.fn(),
   };
 }
 
