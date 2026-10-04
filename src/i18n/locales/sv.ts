@@ -20,9 +20,34 @@ export const sv = {
     },
   },
   onboarding: {
-    placeholder: {
+    firstChild: {
       title: 'Skapa barnprofil',
-      description: 'I nästa steg lägger vi till formuläret för barnets profil.',
+      description:
+        'Lägg till barnets namn och födelsedatum för att komma igång.',
+      displayName: {
+        label: 'Barnets namn eller smeknamn',
+        placeholder: 'Till exempel Mio',
+      },
+      dateOfBirth: {
+        label: 'Födelsedatum',
+        select: 'Välj födelsedatum',
+        change: 'Ändra',
+        confirm: 'Klar',
+        cancel: 'Avbryt',
+      },
+      submit: 'Skapa barnprofil',
+      submitting: 'Skapar barnprofil…',
+      errors: {
+        invalidDisplayName: 'Ange barnets namn eller smeknamn.',
+        invalidCalendarDate: 'Välj ett giltigt födelsedatum.',
+        futureDateOfBirth: 'Födelsedatumet kan inte ligga i framtiden.',
+        creationFailed: 'Det gick inte att slutföra barnprofilen',
+      },
+      recovery: {
+        description:
+          'MyBaby behöver kontrollera dina lokala uppgifter innan du försöker igen.',
+        action: 'Kontrollera igen',
+      },
     },
   },
   screens: {
