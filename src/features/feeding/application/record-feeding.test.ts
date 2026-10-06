@@ -9,7 +9,7 @@ describe('record feeding', () => {
     const event = await recordFeeding(
       {
         feedingIdGenerator: { generate: () => 'generated-feeding-id' },
-        feedingRepository: { save },
+        feedingRepository: { listRecentByChildId: vi.fn(async () => []), save },
       },
       'active-child',
       1_765_000_000_123,
@@ -33,7 +33,7 @@ describe('record feeding', () => {
     await expect(recordFeeding(
       {
         feedingIdGenerator: { generate: () => 'feeding-id' },
-        feedingRepository: { save },
+        feedingRepository: { listRecentByChildId: vi.fn(async () => []), save },
       },
       'child-id',
       123,

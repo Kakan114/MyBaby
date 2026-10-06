@@ -36,6 +36,7 @@ import {
   switchTimerSide as switchTimerSideUseCase,
 } from '../features/feeding/application/breastfeeding-timer';
 import { recordFeeding as recordFeedingUseCase } from '../features/feeding/application/record-feeding';
+import { listRecentFeedings as listRecentFeedingsUseCase } from '../features/feeding/application/list-recent-feedings';
 import type {
   FeedingDetails,
   FeedingEvent,
@@ -57,6 +58,7 @@ export type ChildrenRuntime = Readonly<{
 
 export type FeedingRuntime = Readonly<{
   recordFeeding(details: FeedingDetails): Promise<FeedingEvent>;
+  getRecentFeedings(): Promise<FeedingHistoryRuntimeResult>;
   getBreastfeedingTimer(): Promise<BreastfeedingTimerRuntimeState>;
   startBreastfeedingTimer(side: BreastSide): Promise<BreastfeedingTimerRuntimeState>;
   pauseBreastfeedingTimer(): Promise<BreastfeedingTimerRuntimeState>;
@@ -65,6 +67,11 @@ export type FeedingRuntime = Readonly<{
   finishBreastfeedingTimer(): Promise<BreastfeedingTimerRuntimeState>;
   discardBreastfeedingTimer(): Promise<BreastfeedingTimerRuntimeState>;
   saveFinishedBreastfeedingTimer(): Promise<FeedingEvent>;
+}>;
+
+export type FeedingHistoryRuntimeResult = Readonly<{
+  childId: string;
+  events: readonly FeedingEvent[];
 }>;
 
 export type BreastfeedingTimerRuntimeState =
@@ -215,6 +222,14 @@ function sanitizeChildIdGenerator(generator: ChildIdGenerator): ChildIdGenerator
 
 function sanitizeFeedingRepository(repository: FeedingRepository): FeedingRepository {
   return {
+    async listRecentByChildId(childId, limit) {
+      try {
+        return await repository.listRecentByChildId(childId, limit);
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+
     async save(event) {
       try {
         await repository.save(event);
@@ -281,7 +296,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   let closePromise: Promise<void> | null = null;
   let closed = false;
   let timerBusy = false;
-  let feedingWriteTail: Promise<void> = Promise.resolve();
+  let feedingAccessTail: Promise<void> = Promise.resolve();
   const activeOperations = new Set<Promise<void>>();
   const childIdGenerator = sanitizeChildIdGenerator(dependencies.childIdGenerator);
   const feedingIdGenerator = sanitizeFeedingIdGenerator(
@@ -421,12 +436,12 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     });
   }
 
-  function runSerializedFeedingWrite<TResult>(
+  function runSerializedFeedingAccess<TResult>(
     operation: () => Promise<TResult>,
   ): Promise<TResult> {
     let release!: () => void;
-    const previous = feedingWriteTail;
-    feedingWriteTail = new Promise<void>((resolve) => {
+    const previous = feedingAccessTail;
+    feedingAccessTail = new Promise<void>((resolve) => {
       release = resolve;
     });
 
@@ -560,7 +575,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
           throw new AppRuntimeError('local-data-unavailable');
         }
 
-        return runSerializedFeedingWrite(() =>
+        return runSerializedFeedingAccess(() =>
           recordFeedingUseCase(
             { feedingIdGenerator, feedingRepository },
             activeChild.id,
@@ -568,6 +583,28 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
             details,
           ),
         );
+      });
+    },
+
+    getRecentFeedings() {
+      return runOperation(async () => {
+        const {
+          activeChildRepository,
+          childRepository,
+          feedingRepository,
+        } = await initialize();
+        const activeChild = await getActiveChildUseCase({
+          activeChildRepository,
+          childRepository,
+        });
+
+        if (activeChild === null) {
+          throw new FeedingRuntimeError();
+        }
+
+        const events = await runSerializedFeedingAccess(() =>
+          listRecentFeedingsUseCase(feedingRepository, activeChild.id));
+        return { childId: activeChild.id, events };
       });
     },
 
@@ -640,7 +677,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
 
     discardBreastfeedingTimer() {
       return timerMutation((repository, childId) =>
-        runSerializedFeedingWrite(async () => {
+        runSerializedFeedingAccess(async () => {
           await discardTimerUseCase(repository, childId);
           return { status: 'idle' };
         }));
@@ -648,7 +685,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
 
     saveFinishedBreastfeedingTimer() {
       return timerMutation((repository, childId) =>
-        runSerializedFeedingWrite(() => completeTimerUseCase(
+        runSerializedFeedingAccess(() => completeTimerUseCase(
           { repository, idGenerator: feedingIdGenerator },
           childId,
         )));

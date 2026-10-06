@@ -26,6 +26,7 @@ type TimerContextValue = Readonly<{
   finish(): Promise<void>;
   discard(): Promise<void>;
   save(): Promise<void>;
+  dismissSaved(): void;
 }>;
 
 const TimerContext = createContext<TimerContextValue | null>(null);
@@ -66,6 +67,7 @@ export function BreastfeedingTimerProvider({ children }: PropsWithChildren) {
     finish: controller.finish,
     discard: controller.discard,
     save: controller.save,
+    dismissSaved: controller.dismissSaved,
   }), [controller, state]);
 
   return <TimerContext.Provider value={value}>{children}</TimerContext.Provider>;

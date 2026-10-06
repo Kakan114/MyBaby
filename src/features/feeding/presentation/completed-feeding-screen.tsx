@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { router } from 'expo-router';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -28,6 +29,7 @@ import {
   type FeedingSubmissionState,
 } from './feeding-submission';
 import { BreastfeedingTimer } from './breastfeeding-timer';
+import { FeedingSuccessFocusLifecycle } from './feeding-success-focus-lifecycle';
 
 type FeedingKind = 'breast' | 'bottle';
 
@@ -68,30 +70,41 @@ export function CompletedFeedingScreen() {
 
   if (submission.status === 'success') {
     return (
-      <Screen style={styles.centeredScreen}>
-        <Card style={styles.card}>
-          <AppText variant="headingMedium">{t('feeding.success.title')}</AppText>
-          <AppText style={styles.description}>
-            {t('feeding.success.description')}
-          </AppText>
-          <Button onPress={() => controller.startAnother()}>
-            {t('feeding.success.another')}
-          </Button>
-        </Card>
-      </Screen>
+      <>
+        <FeedingSuccessFocusLifecycle
+          dismissSubmissionSuccess={controller.dismissConfirmedSuccess}
+        />
+        <Screen style={styles.centeredScreen}>
+          <Card style={styles.card}>
+            <AppText variant="headingMedium">{t('feeding.success.title')}</AppText>
+            <AppText style={styles.description}>
+              {t('feeding.success.description')}
+            </AppText>
+            <Button onPress={() => controller.startAnother()}>
+              {t('feeding.success.another')}
+            </Button>
+            <FeedingHistoryButton />
+          </Card>
+        </Screen>
+      </>
     );
   }
 
   if (submission.status === 'uncertain') {
     return (
-      <Screen style={styles.centeredScreen}>
-        <Card style={styles.card}>
-          <AppText variant="headingMedium">{t('feeding.uncertain.title')}</AppText>
-          <AppText style={styles.description}>
-            {t('feeding.uncertain.description')}
-          </AppText>
-        </Card>
-      </Screen>
+      <>
+        <FeedingSuccessFocusLifecycle
+          dismissSubmissionSuccess={controller.dismissConfirmedSuccess}
+        />
+        <Screen style={styles.centeredScreen}>
+          <Card style={styles.card}>
+            <AppText variant="headingMedium">{t('feeding.uncertain.title')}</AppText>
+            <AppText style={styles.description}>
+              {t('feeding.uncertain.description')}
+            </AppText>
+          </Card>
+        </Screen>
+      </>
     );
   }
 
@@ -106,8 +119,12 @@ export function CompletedFeedingScreen() {
   };
 
   return (
-    <Screen style={styles.screen}>
-      <KeyboardAvoidingView
+    <>
+      <FeedingSuccessFocusLifecycle
+        dismissSubmissionSuccess={controller.dismissConfirmedSuccess}
+      />
+      <Screen style={styles.screen}>
+        <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}>
         <ScrollView
@@ -116,6 +133,7 @@ export function CompletedFeedingScreen() {
           <View style={styles.introduction}>
             <AppText variant="headingLarge">{t('feeding.title')}</AppText>
             <AppText style={styles.description}>{t('feeding.description')}</AppText>
+            <FeedingHistoryButton />
           </View>
 
           <Card style={styles.card}>
@@ -222,8 +240,21 @@ export function CompletedFeedingScreen() {
             )}
           </Card>
         </ScrollView>
-      </KeyboardAvoidingView>
-    </Screen>
+        </KeyboardAvoidingView>
+      </Screen>
+    </>
+  );
+}
+
+function FeedingHistoryButton() {
+  const { t } = useTranslation();
+
+  return (
+    <Button
+      onPress={() => router.push('/feeding-history')}
+      variant="secondary">
+      {t('feeding.history.open')}
+    </Button>
   );
 }
 

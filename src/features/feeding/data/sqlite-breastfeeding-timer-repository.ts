@@ -7,13 +7,13 @@ import {
 import type { BreastFeedingEvent } from '../domain/feeding-event';
 import {
   insertFeedingEvent,
-  type FeedingRepositoryDatabase,
+  type FeedingWriteDatabase,
 } from './sqlite-feeding-repository';
 
 type BindValue = string | number | null | boolean | Uint8Array | ArrayBuffer;
 type RunResult = Readonly<{ changes: number }>;
 
-export interface BreastfeedingTimerDatabase extends FeedingRepositoryDatabase {
+export interface BreastfeedingTimerDatabase extends FeedingWriteDatabase {
   execAsync(source: string): Promise<void>;
   getFirstAsync<T>(source: string, params: BindValue[]): Promise<T | null>;
   runAsync(source: string, params: BindValue[]): Promise<RunResult>;

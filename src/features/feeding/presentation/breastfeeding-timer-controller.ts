@@ -144,6 +144,11 @@ export function createBreastfeedingTimerController(
       await runtime.saveFinishedBreastfeedingTimer();
       return { status: 'idle' };
     }, true),
+    dismissSaved() {
+      if (state.status === 'saved') {
+        emit({ status: 'idle' });
+      }
+    },
     tick() {
       if (state.status !== 'session' || state.runtimeState.session.status !== 'running') {
         return;

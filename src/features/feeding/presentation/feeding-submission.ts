@@ -33,6 +33,15 @@ export function createFeedingSubmissionController(
     }
   }
 
+  function dismissConfirmedSuccess() {
+    if (!mounted || state.status !== 'success') {
+      return;
+    }
+
+    locked = false;
+    setState({ status: 'editing' });
+  }
+
   return {
     async submit(createDetails: () => FeedingDetails): Promise<void> {
       if (!mounted || locked) {
@@ -71,14 +80,8 @@ export function createFeedingSubmissionController(
       }
     },
 
-    startAnother() {
-      if (!mounted || state.status !== 'success') {
-        return;
-      }
-
-      locked = false;
-      setState({ status: 'editing' });
-    },
+    dismissConfirmedSuccess,
+    startAnother: dismissConfirmedSuccess,
 
     clearValidation() {
       if (mounted && state.status === 'editing' && state.validation !== undefined) {

@@ -54,6 +54,14 @@ class FakeActiveChildRepository implements ActiveChildRepository {
 }
 
 class FakeFeedingRepository implements FeedingRepository {
+  readonly recentEvents: FeedingEvent[] = [];
+  readonly listRecentByChildId = vi.fn(async (childId: string, limit: number) =>
+    this.recentEvents
+      .filter((event) => event.childId === childId)
+      .sort((left, right) =>
+        right.occurredAtEpochMs - left.occurredAtEpochMs ||
+        right.id.localeCompare(left.id))
+      .slice(0, limit));
   readonly save = vi.fn(async (_event: FeedingEvent): Promise<void> => undefined);
 }
 
@@ -763,6 +771,82 @@ describe('feeding runtime boundary', () => {
     expect(clock).toHaveBeenCalledOnce();
   });
 
+  it('lists recent history for the currently resolved active child', async () => {
+    const fixture = await createActiveChildFixture();
+    const event: FeedingEvent = {
+      id: 'feeding-1', childId: fixture.child.id, occurredAtEpochMs: 123,
+      kind: 'bottle', amountMl: 62.5, contents: 'mixed',
+    };
+    fixture.feedingRepository.recentEvents.push(event, {
+      id: 'other', childId: 'other-child', occurredAtEpochMs: 999,
+      kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0,
+    });
+
+    await expect(fixture.runtime.feeding.getRecentFeedings()).resolves.toEqual({
+      childId: fixture.child.id,
+      events: [event],
+    });
+    expect(fixture.feedingRepository.listRecentByChildId)
+      .toHaveBeenCalledWith(fixture.child.id, 20);
+  });
+
+  it('refuses history when there is no usable active child', async () => {
+    const fixture = createRuntimeFixture();
+
+    await expect(fixture.runtime.feeding.getRecentFeedings()).rejects.toMatchObject({
+      code: 'active-child-required',
+    });
+    expect(fixture.feedingRepository.listRecentByChildId).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes recent-history persistence and mapping failures', async () => {
+    const fixture = await createActiveChildFixture();
+    fixture.feedingRepository.listRecentByChildId.mockRejectedValueOnce(
+      new Error('raw SQLCipher row details'),
+    );
+
+    const error = await fixture.runtime.feeding.getRecentFeedings()
+      .catch((reason: unknown) => reason);
+
+    expect(error).toEqual(new AppRuntimeError('local-data-unavailable'));
+    expect(String(error)).not.toContain('SQLCipher');
+  });
+
+  it('holds history SELECT behind an active ordinary feeding write', async () => {
+    const fixture = await createActiveChildFixture();
+    const write = createDeferred<void>();
+    fixture.feedingRepository.save.mockImplementationOnce(() => write.promise);
+
+    const saving = fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 60, contents: 'formula',
+    });
+    await vi.waitFor(() => expect(fixture.feedingRepository.save).toHaveBeenCalledOnce());
+    const reading = fixture.runtime.feeding.getRecentFeedings();
+    await Promise.resolve();
+    expect(fixture.feedingRepository.listRecentByChildId).not.toHaveBeenCalled();
+
+    write.resolve();
+    await saving;
+    await reading;
+    expect(fixture.feedingRepository.listRecentByChildId).toHaveBeenCalledOnce();
+  });
+
+  it('releases feeding serialization after a failed ordinary write', async () => {
+    const fixture = await createActiveChildFixture();
+    fixture.feedingRepository.save.mockRejectedValueOnce(
+      new Error('injected write failure'),
+    );
+
+    await expect(fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 60, contents: 'formula',
+    })).rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+    await expect(fixture.runtime.feeding.getRecentFeedings()).resolves.toEqual({
+      childId: fixture.child.id,
+      events: [],
+    });
+    expect(fixture.feedingRepository.listRecentByChildId).toHaveBeenCalledOnce();
+  });
+
   it('refuses a missing or stale active child without persisting', async () => {
     const missing = createRuntimeFixture();
     await expect(missing.runtime.feeding.recordFeeding({
@@ -1010,6 +1094,51 @@ describe('feeding runtime boundary', () => {
       'timer-BEGIN', 'timer-INSERT', 'timer-DELETE', 'timer-COMMIT',
       'ordinary-INSERT',
     ]);
+  });
+
+  it('holds history SELECT behind an in-progress timer completion', async () => {
+    const fixture = await createActiveChildFixture();
+    fixture.breastfeedingTimerRepository.session = {
+      sessionId: 'timer-session', childId: fixture.child.id, status: 'finished',
+      accumulatedLeftMs: 60_000, accumulatedRightMs: 0,
+      finishedAtEpochMs: 1_765_000_000_000,
+    };
+    const completionStarted = createDeferred<void>();
+    const finishCompletion = createDeferred<void>();
+    fixture.breastfeedingTimerRepository.complete.mockImplementationOnce(
+      async (_sessionId, event) => {
+        completionStarted.resolve();
+        await finishCompletion.promise;
+        fixture.breastfeedingTimerRepository.completedEvents.push(event);
+        fixture.breastfeedingTimerRepository.session = null;
+      },
+    );
+
+    const saving = fixture.runtime.feeding.saveFinishedBreastfeedingTimer();
+    await completionStarted.promise;
+    const reading = fixture.runtime.feeding.getRecentFeedings();
+    await Promise.resolve();
+    expect(fixture.feedingRepository.listRecentByChildId).not.toHaveBeenCalled();
+
+    finishCompletion.resolve();
+    await saving;
+    await reading;
+    expect(fixture.feedingRepository.listRecentByChildId).toHaveBeenCalledOnce();
+  });
+
+  it('releases feeding serialization after a failed history read', async () => {
+    const fixture = await createActiveChildFixture();
+    fixture.feedingRepository.listRecentByChildId.mockRejectedValueOnce(
+      new Error('injected read failure'),
+    );
+
+    await expect(fixture.runtime.feeding.getRecentFeedings()).rejects.toEqual(
+      new AppRuntimeError('local-data-unavailable'),
+    );
+    await expect(fixture.runtime.feeding.recordFeeding({
+      kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0,
+    })).resolves.toMatchObject({ kind: 'breast' });
+    expect(fixture.feedingRepository.save).toHaveBeenCalledOnce();
   });
 
   it('does not begin timer completion while an ordinary feeding write owns serialization', async () => {

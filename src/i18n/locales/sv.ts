@@ -123,6 +123,25 @@ export const sv = {
       title: 'Matningen kunde inte bekräftas',
       description: 'MyBaby kan inte säkert avgöra om matningen sparades. Försök inte spara samma matning igen just nu.',
     },
+    history: {
+      title: 'Matningshistorik',
+      description: 'De 20 senaste avslutade matningarna för det aktiva barnet.',
+      open: 'Visa matningshistorik',
+      loading: 'Läser matningshistorik…',
+      empty: 'Inga matningar registrerade ännu.',
+      error: {
+        title: 'Matningshistoriken kunde inte läsas',
+        description: 'MyBaby kunde inte läsa de sparade matningarna. Försök igen.',
+      },
+      date: {
+        today: 'Idag',
+        yesterday: 'Igår',
+      },
+      duration: {
+        minute: 'min',
+        second: 'sek',
+      },
+    },
     timer: {
       title: 'Amningstimer',
       loading: 'Läser pågående amning…',

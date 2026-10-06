@@ -18,14 +18,20 @@ type PersistedFeedingRow = {
 };
 
 function createRepository(database: DatabaseSync) {
+  const sqliteValues = (
+    params: (string | number | null | boolean | Uint8Array | ArrayBuffer)[],
+  ) => params.map((value) => {
+    if (typeof value === 'boolean') return Number(value);
+    if (value instanceof ArrayBuffer) return new Uint8Array(value);
+    return value;
+  });
+
   return new SqliteFeedingRepository({
+    async getAllAsync(source: string, params) {
+      return database.prepare(source).all(...sqliteValues(params));
+    },
     async runAsync(source, params) {
-      const sqliteValues = params.map((value) => {
-        if (typeof value === 'boolean') return Number(value);
-        if (value instanceof ArrayBuffer) return new Uint8Array(value);
-        return value;
-      });
-      return database.prepare(source).run(...sqliteValues);
+      return database.prepare(source).run(...sqliteValues(params));
     },
   });
 }
@@ -63,7 +69,10 @@ describe('SqliteFeedingRepository', () => {
       _source: string,
       _params: (string | number | null | boolean | Uint8Array | ArrayBuffer)[],
     ): Promise<unknown> => undefined);
-    await new SqliteFeedingRepository({ runAsync }).save(event);
+    await new SqliteFeedingRepository({
+      getAllAsync: vi.fn(async () => []),
+      runAsync,
+    }).save(event);
 
     expect(runAsync).toHaveBeenCalledOnce();
     const [sql, params] = runAsync.mock.calls[0]!;
@@ -170,5 +179,131 @@ describe('SqliteFeedingRepository', () => {
       kind: 'bottle',
       amount_tenths_ml: 10,
     });
+  });
+
+  it('maps breast variants and bottle tenths back to domain values', async () => {
+    const repository = createRepository(database);
+    const events = [
+      createFeedingEvent({
+        id: 'left', childId: 'child-1', occurredAtEpochMs: 400,
+        kind: 'breast', leftDurationSeconds: 90, rightDurationSeconds: 0,
+      }),
+      createFeedingEvent({
+        id: 'right', childId: 'child-1', occurredAtEpochMs: 300,
+        kind: 'breast', leftDurationSeconds: 0, rightDurationSeconds: 45,
+      }),
+      createFeedingEvent({
+        id: 'both', childId: 'child-1', occurredAtEpochMs: 200,
+        kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 120,
+      }),
+      createFeedingEvent({
+        id: 'one-ml', childId: 'child-1', occurredAtEpochMs: 100,
+        kind: 'bottle', amountMl: 1, contents: 'expressed-breast-milk',
+      }),
+      createFeedingEvent({
+        id: 'sixty-two-five', childId: 'child-1', occurredAtEpochMs: 50,
+        kind: 'bottle', amountMl: 62.5, contents: 'mixed',
+      }),
+    ];
+    for (const event of events) await repository.save(event);
+
+    await expect(repository.listRecentByChildId('child-1', 20)).resolves.toEqual(events);
+  });
+
+  it('isolates children, limits results, and orders equal timestamps by id DESC', async () => {
+    database.prepare(`
+      INSERT INTO children (id, display_name, date_of_birth)
+      VALUES (?, ?, ?);
+    `).run('child-2', 'Mira', '2024-01-10');
+    const repository = createRepository(database);
+
+    for (let index = 0; index < 22; index += 1) {
+      await repository.save(createFeedingEvent({
+        id: `child-1-${String(index).padStart(2, '0')}`,
+        childId: 'child-1',
+        occurredAtEpochMs: index < 2 ? 500 : index,
+        kind: 'bottle',
+        amountMl: 10,
+        contents: 'formula',
+      }));
+    }
+    await repository.save(createFeedingEvent({
+      id: 'other-child-newest', childId: 'child-2', occurredAtEpochMs: 999,
+      kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0,
+    }));
+
+    const results = await repository.listRecentByChildId('child-1', 20);
+    expect(results).toHaveLength(20);
+    expect(results.slice(0, 2).map(({ id }) => id)).toEqual([
+      'child-1-01',
+      'child-1-00',
+    ]);
+    expect(results.every(({ childId }) => childId === 'child-1')).toBe(true);
+    expect(results.some(({ id }) => id === 'other-child-newest')).toBe(false);
+    await expect(repository.listRecentByChildId('missing-child', 20)).resolves.toEqual([]);
+  });
+
+  it('uses a bound child ID and limit in the deterministic query', async () => {
+    const getAllAsync = vi.fn<(
+      source: string,
+      params: (string | number | null | boolean | Uint8Array | ArrayBuffer)[],
+    ) => Promise<unknown[]>>(async () => []);
+    const repository = new SqliteFeedingRepository({
+      getAllAsync,
+      runAsync: vi.fn(async () => undefined),
+    });
+
+    await repository.listRecentByChildId('child-1', 20);
+
+    const [sql, params] = getAllAsync.mock.calls[0]!;
+    expect(sql).toContain('WHERE child_id = ?');
+    expect(sql).toContain('ORDER BY occurred_at_epoch_ms DESC, id DESC');
+    expect(sql).toContain('LIMIT ?');
+    expect(sql).not.toContain('child-1');
+    expect(params).toEqual(['child-1', 20]);
+  });
+
+  it.each([
+    ['unknown kind', { kind: 'tube' }],
+    ['child mismatch', { child_id: 'child-2' }],
+    ['fractional timestamp', { occurred_at_epoch_ms: 1.5 }],
+    ['text timestamp', { occurred_at_epoch_ms: '100' }],
+    ['unrepresentable timestamp', { occurred_at_epoch_ms: 9_000_000_000_000_000 }],
+    ['breast amount present', { amount_tenths_ml: 10 }],
+    ['breast duration null', { left_duration_seconds: null }],
+    ['breast duration fractional', { left_duration_seconds: 1.5 }],
+  ])('rejects malformed persisted breast row: %s', async (_label, override) => {
+    const row = {
+      id: 'event-1', child_id: 'child-1', occurred_at_epoch_ms: 100,
+      kind: 'breast', left_duration_seconds: 60, right_duration_seconds: 0,
+      amount_tenths_ml: null, contents: null, ...override,
+    };
+    const repository = new SqliteFeedingRepository({
+      getAllAsync: vi.fn(async () => [row]),
+      runAsync: vi.fn(async () => undefined),
+    });
+
+    await expect(repository.listRecentByChildId('child-1', 20)).rejects.toThrow();
+  });
+
+  it.each([
+    ['left duration present', { left_duration_seconds: 0 }],
+    ['amount null', { amount_tenths_ml: null }],
+    ['amount fractional', { amount_tenths_ml: 10.5 }],
+    ['amount text', { amount_tenths_ml: '10' }],
+    ['contents null', { contents: null }],
+    ['unsupported contents', { contents: 'water' }],
+  ])('rejects malformed persisted bottle row: %s', async (_label, override) => {
+    const row = {
+      id: 'event-1', child_id: 'child-1', occurred_at_epoch_ms: 100,
+      kind: 'bottle', left_duration_seconds: null, right_duration_seconds: null,
+      amount_tenths_ml: 10, contents: 'formula', ...override,
+    };
+    const repository = new SqliteFeedingRepository({
+      getAllAsync: vi.fn(async () => [row]),
+      runAsync: vi.fn(async () => undefined),
+    });
+
+    await expect(repository.listRecentByChildId('child-1', 20)).rejects.toThrow();
   });
 });

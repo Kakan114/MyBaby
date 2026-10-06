@@ -37,6 +37,7 @@ describe('feeding submission lifecycle', () => {
     const test = fixture(vi.fn(() => pending.promise));
 
     const first = test.controller.submit(() => details);
+    test.controller.dismissConfirmedSuccess();
     const duplicate = test.controller.submit(() => details);
     expect(test.recordFeeding).toHaveBeenCalledOnce();
     pending.resolve(event);
@@ -63,6 +64,8 @@ describe('feeding submission lifecycle', () => {
     const test = fixture(recordFeeding);
 
     await test.controller.submit(() => details);
+    test.controller.dismissConfirmedSuccess();
+    test.controller.startAnother();
     await test.controller.submit(() => details);
 
     expect(recordFeeding).toHaveBeenCalledOnce();
@@ -88,5 +91,15 @@ describe('feeding submission lifecycle', () => {
     test.controller.startAnother();
     await test.controller.submit(() => details);
     expect(test.recordFeeding).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears confirmed success without another write before leaving for history', async () => {
+    const test = fixture();
+    await test.controller.submit(() => details);
+
+    test.controller.startAnother();
+
+    expect(test.states.at(-1)).toEqual({ status: 'editing' });
+    expect(test.recordFeeding).toHaveBeenCalledOnce();
   });
 });

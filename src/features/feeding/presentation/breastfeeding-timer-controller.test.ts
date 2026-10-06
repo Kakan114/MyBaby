@@ -60,6 +60,7 @@ const paused: BreastfeedingTimerRuntimeState = {
 function runtimeFixture() {
   return {
     recordFeeding: vi.fn<FeedingRuntime['recordFeeding']>(),
+    getRecentFeedings: vi.fn<FeedingRuntime['getRecentFeedings']>(),
     getBreastfeedingTimer: vi.fn<FeedingRuntime['getBreastfeedingTimer']>(
       async () => ({ status: 'idle' }),
     ),
@@ -188,6 +189,59 @@ describe('breastfeeding timer presentation controller', () => {
     expect(runtime.saveFinishedBreastfeedingTimer).toHaveBeenCalledOnce();
     expect(runtime.getBreastfeedingTimer).toHaveBeenCalledTimes(2);
     expect(controller.state).toEqual({ status: 'saved' });
+  });
+
+  it('dismisses only confirmed saved presentation state before history navigation', async () => {
+    const runtime = runtimeFixture();
+    runtime.getBreastfeedingTimer.mockResolvedValueOnce(finished);
+    runtime.saveFinishedBreastfeedingTimer.mockResolvedValueOnce({
+      id: 'feeding-1', childId: 'child-1', occurredAtEpochMs: 1_030_000,
+      kind: 'breast', leftDurationSeconds: 10, rightDurationSeconds: 20,
+    });
+    const controller = createBreastfeedingTimerController(runtime, () => 1_030_000);
+    controller.mount(() => undefined);
+    await controller.refresh();
+    await controller.save();
+    expect(controller.state).toEqual({ status: 'saved' });
+
+    controller.dismissSaved();
+
+    expect(controller.state).toEqual({ status: 'idle' });
+    expect(runtime.saveFinishedBreastfeedingTimer).toHaveBeenCalledOnce();
+    expect(runtime.getBreastfeedingTimer).toHaveBeenCalledOnce();
+  });
+
+  it('does not alter an active timer when history opens', async () => {
+    const runtime = runtimeFixture();
+    runtime.getBreastfeedingTimer.mockResolvedValueOnce(running);
+    const controller = createBreastfeedingTimerController(runtime, () => 1_030_000);
+    controller.mount(() => undefined);
+    await controller.refresh();
+
+    controller.dismissSaved();
+
+    expect(controller.state).toMatchObject({
+      status: 'session',
+      runtimeState: running,
+    });
+  });
+
+  it.each([
+    ['paused', paused],
+    ['finished-unsaved', finished],
+  ] as const)('does not alter a %s timer when Logga loses focus', async (_name, state) => {
+    const runtime = runtimeFixture();
+    runtime.getBreastfeedingTimer.mockResolvedValueOnce(state);
+    const controller = createBreastfeedingTimerController(runtime, () => 1_030_000);
+    controller.mount(() => undefined);
+    await controller.refresh();
+
+    controller.dismissSaved();
+
+    expect(controller.state).toMatchObject({
+      status: 'session',
+      runtimeState: state,
+    });
   });
 
   it('retains a recoverable finished session after a rolled-back save failure', async () => {
