@@ -123,6 +123,68 @@ export const sv = {
       title: 'Matningen kunde inte bekräftas',
       description: 'MyBaby kan inte säkert avgöra om matningen sparades. Försök inte spara samma matning igen just nu.',
     },
+    timer: {
+      title: 'Amningstimer',
+      loading: 'Läser pågående amning…',
+      startLeft: 'Starta vänster',
+      startRight: 'Starta höger',
+      manual: 'Ange tid manuellt',
+      backToTimer: 'Tillbaka till timern',
+      running: '{{side}} pågår',
+      paused: 'Amningen är pausad',
+      finished: 'Sammanfattning',
+      pause: 'Pausa',
+      resume: 'Fortsätt',
+      resumeSide: 'Fortsätter på {{side}}',
+      switchSide: 'Byt sida',
+      changeResumeSide: 'Byt sida för fortsättning',
+      finish: 'Avsluta',
+      save: 'Spara matning',
+      discard: {
+        active: 'Avbryt matning',
+        finished: 'Radera utan att spara',
+        confirmation: {
+          active: {
+            title: 'Avbryt matningen?',
+            message: 'Den registrerade tiden tas bort och matningen sparas inte.',
+            cancel: 'Fortsätt matning',
+            confirm: 'Avbryt och radera',
+          },
+          finished: {
+            title: 'Radera matningen?',
+            message: 'Den avslutade matningen tas bort och kommer inte att sparas.',
+            cancel: 'Behåll',
+            confirm: 'Radera utan att spara',
+          },
+        },
+      },
+      side: {
+        left: 'Vänster',
+        right: 'Höger',
+      },
+      error: {
+        title: 'Timern kunde inte läsas',
+        description: 'Kontrollera den sparade timern igen eller ange tiden manuellt.',
+      },
+      issue: {
+        clock: {
+          title: 'Enhetens tid har ändrats',
+          description: 'Timern räknar inte osäker tid. Kontrollera läget eller ange tiden manuellt.',
+        },
+        ownership: {
+          title: 'Timern tillhör ett annat barn',
+          description: 'Välj rätt barnprofil innan du fortsätter eller sparar timern.',
+        },
+        'duration-too-short': {
+          title: 'Amningen är för kort för att sparas',
+          description: 'Fortsätt timern eller ange tiden manuellt.',
+        },
+        uncertain: {
+          title: 'Resultatet behöver kontrolleras',
+          description: 'MyBaby har läst den sparade timern igen. Kontrollera läget innan du fortsätter.',
+        },
+      },
+    },
   },
   screens: {
     today: {

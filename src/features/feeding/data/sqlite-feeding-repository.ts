@@ -31,16 +31,23 @@ export class SqliteFeedingRepository implements FeedingRepository {
   constructor(private readonly database: FeedingRepositoryDatabase) {}
 
   async save(event: FeedingEvent): Promise<void> {
+    await insertFeedingEvent(this.database, event);
+  }
+}
+
+export async function insertFeedingEvent(
+  database: FeedingRepositoryDatabase,
+  event: FeedingEvent,
+): Promise<void> {
     const variantValues = event.kind === 'breast'
       ? [event.leftDurationSeconds, event.rightDurationSeconds, null, null]
       : [null, null, amountMlToTenths(event.amountMl), event.contents];
 
-    await this.database.runAsync(INSERT_FEEDING, [
+    await database.runAsync(INSERT_FEEDING, [
       event.id,
       event.childId,
       event.occurredAtEpochMs,
       event.kind,
       ...variantValues,
     ]);
-  }
 }

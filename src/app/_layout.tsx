@@ -2,6 +2,7 @@ import { Stack, usePathname } from 'expo-router';
 
 import '@/i18n';
 import { ChildBootstrapGate } from '@/features/children/presentation/child-bootstrap-gate';
+import { BreastfeedingTimerProvider } from '@/features/feeding/presentation/breastfeeding-timer-provider';
 import { AppRuntimeProvider } from '@/runtime/app-runtime-provider';
 
 export default function RootLayout() {
@@ -16,7 +17,11 @@ export default function RootLayout() {
   return (
     <AppRuntimeProvider>
       <ChildBootstrapGate>
-        {(bootstrapStatus) => (
+        {(bootstrapStatus) => bootstrapStatus === 'ready' ? (
+          <BreastfeedingTimerProvider>
+            <RootStack bootstrapStatus={bootstrapStatus} />
+          </BreastfeedingTimerProvider>
+        ) : (
           <RootStack bootstrapStatus={bootstrapStatus} />
         )}
       </ChildBootstrapGate>

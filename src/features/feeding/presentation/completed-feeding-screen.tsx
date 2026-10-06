@@ -27,6 +27,7 @@ import {
   type FeedingSubmissionController,
   type FeedingSubmissionState,
 } from './feeding-submission';
+import { BreastfeedingTimer } from './breastfeeding-timer';
 
 type FeedingKind = 'breast' | 'bottle';
 
@@ -44,6 +45,7 @@ export function CompletedFeedingScreen() {
   const [rightMinutes, setRightMinutes] = useState('');
   const [amountMl, setAmountMl] = useState('');
   const [contents, setContents] = useState<BottleContents>('expressed-breast-milk');
+  const [manualBreastfeeding, setManualBreastfeeding] = useState(false);
   const [submission, setSubmission] = useState<FeedingSubmissionState>({
     status: 'editing',
   });
@@ -143,8 +145,16 @@ export function CompletedFeedingScreen() {
               </Button>
             </View>
 
-            {kind === 'breast' ? (
+            {kind === 'breast' && !manualBreastfeeding ? (
+              <BreastfeedingTimer onManual={() => setManualBreastfeeding(true)} />
+            ) : kind === 'breast' ? (
               <View style={styles.fields}>
+                <Button
+                  disabled={disabled}
+                  onPress={() => setManualBreastfeeding(false)}
+                  variant="secondary">
+                  {t('feeding.timer.backToTimer')}
+                </Button>
                 <DurationInput
                   disabled={disabled}
                   label={t('feeding.breast.left')}
@@ -198,16 +208,18 @@ export function CompletedFeedingScreen() {
               </View>
             )}
 
-            <Button
-              disabled={disabled}
-              onPress={() => {
-                Keyboard.dismiss();
-                void controller.submit(() => kind === 'breast'
-                  ? createBreastFeedingDetails(leftMinutes, rightMinutes)
-                  : createBottleFeedingDetails(amountMl, contents));
-              }}>
-              {disabled ? t('feeding.saving') : t('feeding.save')}
-            </Button>
+            {(kind === 'bottle' || manualBreastfeeding) && (
+              <Button
+                disabled={disabled}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  void controller.submit(() => kind === 'breast'
+                    ? createBreastFeedingDetails(leftMinutes, rightMinutes)
+                    : createBottleFeedingDetails(amountMl, contents));
+                }}>
+                {disabled ? t('feeding.saving') : t('feeding.save')}
+              </Button>
+            )}
           </Card>
         </ScrollView>
       </KeyboardAvoidingView>

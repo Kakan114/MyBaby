@@ -1,4 +1,4 @@
-export const LATEST_LOCAL_DATABASE_VERSION = 3;
+export const LATEST_LOCAL_DATABASE_VERSION = 4;
 
 export interface LocalMigrationTransaction {
   execAsync(source: string): Promise<void>;
@@ -87,6 +87,66 @@ const migrations: readonly Migration[] = [
             AND amount_tenths_ml > 0
             AND contents IS NOT NULL
             AND contents IN ('expressed-breast-milk', 'formula', 'mixed')
+          )
+        )
+      );
+    `);
+  },
+  async (transaction) => {
+    await transaction.execAsync(`
+      CREATE TABLE breastfeeding_timer_session (
+        id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+        session_id TEXT NOT NULL UNIQUE CHECK (length(trim(session_id)) > 0),
+        child_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('running', 'paused', 'finished')),
+        accumulated_left_ms INTEGER NOT NULL
+          CHECK (
+            typeof(accumulated_left_ms) = 'integer'
+            AND accumulated_left_ms >= 0
+            AND accumulated_left_ms <= 9007199254740991
+          ),
+        accumulated_right_ms INTEGER NOT NULL
+          CHECK (
+            typeof(accumulated_right_ms) = 'integer'
+            AND accumulated_right_ms >= 0
+            AND accumulated_right_ms <= 9007199254740991
+          ),
+        active_side TEXT,
+        resume_side TEXT,
+        segment_started_at_epoch_ms INTEGER,
+        finished_at_epoch_ms INTEGER,
+        FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE,
+        CHECK (
+          (
+            state = 'running'
+            AND active_side IS NOT NULL
+            AND active_side IN ('left', 'right')
+            AND resume_side IS NULL
+            AND segment_started_at_epoch_ms IS NOT NULL
+            AND typeof(segment_started_at_epoch_ms) = 'integer'
+            AND segment_started_at_epoch_ms >= 0
+            AND segment_started_at_epoch_ms <= 9007199254740991
+            AND finished_at_epoch_ms IS NULL
+          )
+          OR
+          (
+            state = 'paused'
+            AND active_side IS NULL
+            AND resume_side IS NOT NULL
+            AND resume_side IN ('left', 'right')
+            AND segment_started_at_epoch_ms IS NULL
+            AND finished_at_epoch_ms IS NULL
+          )
+          OR
+          (
+            state = 'finished'
+            AND active_side IS NULL
+            AND resume_side IS NULL
+            AND segment_started_at_epoch_ms IS NULL
+            AND finished_at_epoch_ms IS NOT NULL
+            AND typeof(finished_at_epoch_ms) = 'integer'
+            AND finished_at_epoch_ms >= 0
+            AND finished_at_epoch_ms <= 9007199254740991
           )
         )
       );

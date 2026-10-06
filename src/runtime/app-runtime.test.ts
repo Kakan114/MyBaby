@@ -13,7 +13,9 @@ import {
   type Child,
 } from '../features/children/domain/child';
 import type { FeedingRepository } from '../features/feeding/application/feeding-repository';
+import type { BreastfeedingTimerRepository } from '../features/feeding/application/breastfeeding-timer-repository';
 import type { FeedingEvent } from '../features/feeding/domain/feeding-event';
+import type { BreastfeedingTimerSession } from '../features/feeding/domain/breastfeeding-timer';
 
 import {
   AppRuntimeError,
@@ -55,6 +57,29 @@ class FakeFeedingRepository implements FeedingRepository {
   readonly save = vi.fn(async (_event: FeedingEvent): Promise<void> => undefined);
 }
 
+class FakeBreastfeedingTimerRepository implements BreastfeedingTimerRepository {
+  session: BreastfeedingTimerSession | null = null;
+  readonly completedEvents: FeedingEvent[] = [];
+  readonly get = vi.fn(async () => this.session);
+  readonly create = vi.fn(async (session: BreastfeedingTimerSession) => {
+    if (this.session !== null) throw new Error('session exists');
+    this.session = session;
+  });
+  readonly replace = vi.fn(async (session: BreastfeedingTimerSession) => {
+    if (this.session === null) throw new Error('session missing');
+    this.session = session;
+  });
+  readonly discard = vi.fn(async (sessionId: string) => {
+    if (this.session?.sessionId !== sessionId) throw new Error('session missing');
+    this.session = null;
+  });
+  readonly complete = vi.fn(async (_sessionId: string, event: FeedingEvent) => {
+    if (this.session === null) throw new Error('session missing');
+    this.completedEvents.push(event);
+    this.session = null;
+  });
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -76,6 +101,7 @@ function createRuntimeFixture(options?: {
   const activeChildRepository = new FakeActiveChildRepository();
   const childRepository = new FakeChildRepository();
   const feedingRepository = new FakeFeedingRepository();
+  const breastfeedingTimerRepository = new FakeBreastfeedingTimerRepository();
   const openDatabase = vi.fn(options?.openDatabase ?? (async () => database));
   const createChildRepository = vi.fn(() => childRepository);
   const createActiveChildRepository = vi.fn(() => activeChildRepository);
@@ -84,6 +110,7 @@ function createRuntimeFixture(options?: {
     createActiveChildRepository,
     createChildRepository,
     createFeedingRepository: () => feedingRepository,
+    createBreastfeedingTimerRepository: () => breastfeedingTimerRepository,
     childIdGenerator: { generate: () => 'generated-child-id' },
     feedingIdGenerator:
       options?.feedingIdGenerator ?? { generate: () => 'generated-feeding-id' },
@@ -97,6 +124,7 @@ function createRuntimeFixture(options?: {
     activeChildRepository,
     childRepository,
     feedingRepository,
+    breastfeedingTimerRepository,
     createActiveChildRepository,
     createChildRepository,
     openDatabase,
@@ -239,6 +267,8 @@ describe('application runtime', () => {
       createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => childRepository,
       createFeedingRepository: () => new FakeFeedingRepository(),
+      createBreastfeedingTimerRepository: () =>
+        new FakeBreastfeedingTimerRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       getCurrentCalendarDate: () => asOf,
@@ -261,6 +291,8 @@ describe('application runtime', () => {
         throw new Error('repository construction exposed native details');
       },
       createFeedingRepository: () => new FakeFeedingRepository(),
+      createBreastfeedingTimerRepository: () =>
+        new FakeBreastfeedingTimerRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       getCurrentCalendarDate: () => asOf,
@@ -341,6 +373,8 @@ describe('application runtime', () => {
       createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => new FakeChildRepository(),
       createFeedingRepository: () => new FakeFeedingRepository(),
+      createBreastfeedingTimerRepository: () =>
+        new FakeBreastfeedingTimerRepository(),
       childIdGenerator: {
         generate: () => {
           throw new Error('raw native UUID failure');
@@ -822,5 +856,319 @@ describe('feeding runtime boundary', () => {
     await operation;
     await closing;
     expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
+  });
+
+  it('owns timer child, ID, clock, and frozen completion timestamp', async () => {
+    let epoch = 1_000_000;
+    let id = 0;
+    const fixture = await createActiveChildFixture({
+      getCurrentEpochMs: () => epoch,
+      feedingIdGenerator: { generate: () => `feeding-${++id}` },
+    });
+
+    await fixture.runtime.feeding.startBreastfeedingTimer('left');
+    epoch = 1_062_500;
+    const finished = await fixture.runtime.feeding.finishBreastfeedingTimer();
+    epoch = 9_000_000;
+    const event = await fixture.runtime.feeding.saveFinishedBreastfeedingTimer();
+
+    expect(finished).toMatchObject({
+      status: 'ready',
+      session: { status: 'finished', childId: fixture.child.id },
+    });
+    expect(event).toMatchObject({
+      id: 'feeding-2',
+      childId: fixture.child.id,
+      occurredAtEpochMs: 1_062_500,
+      leftDurationSeconds: 62,
+      rightDurationSeconds: 0,
+    });
+    expect(fixture.breastfeedingTimerRepository.completedEvents).toEqual([event]);
+  });
+
+  it('restores persisted state and safely pauses a backward clock with one read', async () => {
+    let epoch = 1_000_000;
+    const clock = vi.fn(() => epoch);
+    const fixture = await createActiveChildFixture({ getCurrentEpochMs: clock });
+    await fixture.runtime.feeding.startBreastfeedingTimer('right');
+    clock.mockClear();
+    epoch = 999_000;
+
+    const state = await fixture.runtime.feeding.getBreastfeedingTimer();
+
+    expect(clock).toHaveBeenCalledOnce();
+    expect(state).toMatchObject({
+      status: 'ready',
+      clockMovedBackward: true,
+      session: {
+        status: 'paused',
+        childId: fixture.child.id,
+        resumeSide: 'right',
+        accumulatedLeftMs: 0,
+        accumulatedRightMs: 0,
+      },
+    });
+  });
+
+  it('does not move a persisted timer to a different active child', async () => {
+    const fixture = await createActiveChildFixture();
+    await fixture.runtime.feeding.startBreastfeedingTimer('left');
+    const other: Child = {
+      id: 'other-child', displayName: 'Mira',
+      dateOfBirth: createCalendarDate('2025-02-10'),
+    };
+    fixture.childRepository.children.set(other.id, other);
+    fixture.activeChildRepository.activeChildId = other.id;
+
+    await expect(fixture.runtime.feeding.getBreastfeedingTimer()).resolves
+      .toMatchObject({ status: 'active-child-mismatch' });
+    await expect(fixture.runtime.feeding.pauseBreastfeedingTimer()).rejects
+      .toMatchObject({ code: 'active-child-mismatch' });
+    expect(fixture.breastfeedingTimerRepository.session?.childId)
+      .toBe(fixture.child.id);
+  });
+
+  it('synchronously rejects a duplicate timer transition while one is pending', async () => {
+    const fixture = await createActiveChildFixture();
+    const pending = createDeferred<BreastfeedingTimerSession | null>();
+    fixture.breastfeedingTimerRepository.get.mockImplementationOnce(
+      () => pending.promise,
+    );
+
+    const first = fixture.runtime.feeding.startBreastfeedingTimer('left');
+    await vi.waitFor(() => {
+      expect(fixture.breastfeedingTimerRepository.get).toHaveBeenCalledOnce();
+    });
+    await expect(fixture.runtime.feeding.startBreastfeedingTimer('right'))
+      .rejects.toMatchObject({ code: 'timer-busy' });
+    pending.resolve(null);
+    await expect(first).resolves.toMatchObject({ status: 'ready' });
+    expect(fixture.breastfeedingTimerRepository.create).toHaveBeenCalledOnce();
+  });
+
+  it('sanitizes timer persistence and clock failures', async () => {
+    const repositoryFailure = await createActiveChildFixture();
+    repositoryFailure.breastfeedingTimerRepository.get.mockRejectedValueOnce(
+      new Error('raw SQLCipher timer path'),
+    );
+    const repositoryError = repositoryFailure.runtime.feeding
+      .getBreastfeedingTimer().catch((reason: unknown) => reason);
+
+    const clockFailure = await createActiveChildFixture({
+      getCurrentEpochMs: () => Number.NaN,
+    });
+    const clockError = clockFailure.runtime.feeding
+      .startBreastfeedingTimer('left').catch((reason: unknown) => reason);
+
+    for (const error of await Promise.all([repositoryError, clockError])) {
+      expect(error).toEqual(new AppRuntimeError('local-data-unavailable'));
+      expect(String(error)).not.toMatch(/SQLCipher|timer path/);
+    }
+  });
+
+  it('holds ordinary feeding SQL behind an in-progress timer completion', async () => {
+    let id = 0;
+    const clock = vi.fn(() => 1_765_000_000_123);
+    const fixture = await createActiveChildFixture({
+      feedingIdGenerator: { generate: () => `feeding-${++id}` },
+      getCurrentEpochMs: clock,
+    });
+    fixture.breastfeedingTimerRepository.session = {
+      sessionId: 'timer-session', childId: fixture.child.id, status: 'finished',
+      accumulatedLeftMs: 60_000, accumulatedRightMs: 0,
+      finishedAtEpochMs: 1_765_000_000_000,
+    };
+    const timerTransactionStarted = createDeferred<void>();
+    const finishTimerTransaction = createDeferred<void>();
+    const order: string[] = [];
+    fixture.breastfeedingTimerRepository.complete.mockImplementationOnce(
+      async (_sessionId, event) => {
+        order.push('timer-BEGIN', 'timer-INSERT');
+        timerTransactionStarted.resolve();
+        await finishTimerTransaction.promise;
+        order.push('timer-DELETE', 'timer-COMMIT');
+        fixture.breastfeedingTimerRepository.completedEvents.push(event);
+        fixture.breastfeedingTimerRepository.session = null;
+      },
+    );
+    fixture.feedingRepository.save.mockImplementationOnce(async () => {
+      order.push('ordinary-INSERT');
+    });
+
+    const timerSave = fixture.runtime.feeding.saveFinishedBreastfeedingTimer();
+    await timerTransactionStarted.promise;
+    const ordinarySave = fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 60, contents: 'formula',
+    });
+    await vi.waitFor(() => expect(clock).toHaveBeenCalledOnce());
+    expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
+
+    finishTimerTransaction.resolve();
+    await timerSave;
+    await ordinarySave;
+    expect(order).toEqual([
+      'timer-BEGIN', 'timer-INSERT', 'timer-DELETE', 'timer-COMMIT',
+      'ordinary-INSERT',
+    ]);
+  });
+
+  it('does not begin timer completion while an ordinary feeding write owns serialization', async () => {
+    let id = 0;
+    const fixture = await createActiveChildFixture({
+      feedingIdGenerator: { generate: () => `feeding-${++id}` },
+    });
+    fixture.breastfeedingTimerRepository.session = {
+      sessionId: 'timer-session', childId: fixture.child.id, status: 'finished',
+      accumulatedLeftMs: 60_000, accumulatedRightMs: 0,
+      finishedAtEpochMs: 1_765_000_000_000,
+    };
+    const ordinaryWriteStarted = createDeferred<void>();
+    const finishOrdinaryWrite = createDeferred<void>();
+    const order: string[] = [];
+    fixture.feedingRepository.save.mockImplementationOnce(async () => {
+      order.push('ordinary-INSERT-start');
+      ordinaryWriteStarted.resolve();
+      await finishOrdinaryWrite.promise;
+      order.push('ordinary-INSERT-end');
+    });
+    fixture.breastfeedingTimerRepository.complete.mockImplementationOnce(
+      async (_sessionId, event) => {
+        order.push('timer-BEGIN');
+        fixture.breastfeedingTimerRepository.completedEvents.push(event);
+        fixture.breastfeedingTimerRepository.session = null;
+      },
+    );
+
+    const ordinarySave = fixture.runtime.feeding.recordFeeding({
+      kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0,
+    });
+    await ordinaryWriteStarted.promise;
+    const timerSave = fixture.runtime.feeding.saveFinishedBreastfeedingTimer();
+    await vi.waitFor(() => {
+      expect(fixture.childRepository.getById).toHaveBeenCalledTimes(2);
+    });
+    await Promise.resolve();
+    expect(fixture.breastfeedingTimerRepository.complete).not.toHaveBeenCalled();
+
+    finishOrdinaryWrite.resolve();
+    await ordinarySave;
+    await timerSave;
+    expect(order).toEqual([
+      'ordinary-INSERT-start', 'ordinary-INSERT-end', 'timer-BEGIN',
+    ]);
+  });
+
+  it('releases feeding-write serialization when timer completion fails', async () => {
+    const clock = vi.fn(() => 1_765_000_000_123);
+    const fixture = await createActiveChildFixture({ getCurrentEpochMs: clock });
+    fixture.breastfeedingTimerRepository.session = {
+      sessionId: 'timer-session', childId: fixture.child.id, status: 'finished',
+      accumulatedLeftMs: 60_000, accumulatedRightMs: 0,
+      finishedAtEpochMs: 1_765_000_000_000,
+    };
+    const completionStarted = createDeferred<void>();
+    const failCompletion = createDeferred<void>();
+    fixture.breastfeedingTimerRepository.complete.mockImplementationOnce(
+      async () => {
+        completionStarted.resolve();
+        await failCompletion.promise;
+        throw new Error('injected transaction failure');
+      },
+    );
+
+    const timerSave = fixture.runtime.feeding.saveFinishedBreastfeedingTimer();
+    await completionStarted.promise;
+    const ordinarySave = fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 60, contents: 'formula',
+    });
+    await vi.waitFor(() => expect(clock).toHaveBeenCalledOnce());
+    expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
+
+    failCompletion.resolve();
+    await expect(timerSave).rejects.toEqual(
+      new AppRuntimeError('local-data-unavailable'),
+    );
+    await expect(ordinarySave).resolves.toMatchObject({ kind: 'bottle' });
+    expect(fixture.feedingRepository.save).toHaveBeenCalledOnce();
+  });
+
+  it('discards the active child timer without creating a feeding event', async () => {
+    const fixture = await createActiveChildFixture();
+    fixture.breastfeedingTimerRepository.session = {
+      sessionId: 'timer-session', childId: fixture.child.id, status: 'paused',
+      resumeSide: 'left', accumulatedLeftMs: 10_000, accumulatedRightMs: 0,
+    };
+
+    await expect(fixture.runtime.feeding.discardBreastfeedingTimer())
+      .resolves.toEqual({ status: 'idle' });
+
+    expect(fixture.breastfeedingTimerRepository.discard)
+      .toHaveBeenCalledWith('timer-session');
+    expect(fixture.breastfeedingTimerRepository.session).toBeNull();
+    expect(fixture.breastfeedingTimerRepository.completedEvents).toEqual([]);
+  });
+
+  it('refuses discard when the active child does not own the timer', async () => {
+    const fixture = await createActiveChildFixture();
+    fixture.breastfeedingTimerRepository.session = {
+      sessionId: 'timer-session', childId: 'other-child', status: 'running',
+      activeSide: 'right', accumulatedLeftMs: 0, accumulatedRightMs: 0,
+      segmentStartedAtEpochMs: 1_000_000,
+    };
+
+    await expect(fixture.runtime.feeding.discardBreastfeedingTimer())
+      .rejects.toMatchObject({ code: 'active-child-mismatch' });
+    expect(fixture.breastfeedingTimerRepository.discard).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes discard persistence failures without clearing the session', async () => {
+    const fixture = await createActiveChildFixture();
+    const session: BreastfeedingTimerSession = {
+      sessionId: 'timer-session', childId: fixture.child.id, status: 'paused',
+      resumeSide: 'left', accumulatedLeftMs: 10_000, accumulatedRightMs: 0,
+    };
+    fixture.breastfeedingTimerRepository.session = session;
+    fixture.breastfeedingTimerRepository.discard.mockRejectedValueOnce(
+      new Error('raw SQLite discard path'),
+    );
+
+    const error = await fixture.runtime.feeding.discardBreastfeedingTimer()
+      .catch((reason: unknown) => reason);
+
+    expect(error).toEqual(new AppRuntimeError('local-data-unavailable'));
+    expect(String(error)).not.toContain('SQLite');
+    expect(fixture.breastfeedingTimerRepository.session).toBe(session);
+  });
+
+  it('serializes discard against an ordinary feeding write', async () => {
+    const clock = vi.fn(() => 1_765_000_000_123);
+    const fixture = await createActiveChildFixture({ getCurrentEpochMs: clock });
+    fixture.breastfeedingTimerRepository.session = {
+      sessionId: 'timer-session', childId: fixture.child.id, status: 'running',
+      activeSide: 'left', accumulatedLeftMs: 0, accumulatedRightMs: 0,
+      segmentStartedAtEpochMs: 1_000_000,
+    };
+    const discardStarted = createDeferred<void>();
+    const finishDiscard = createDeferred<void>();
+    fixture.breastfeedingTimerRepository.discard.mockImplementationOnce(
+      async () => {
+        discardStarted.resolve();
+        await finishDiscard.promise;
+        fixture.breastfeedingTimerRepository.session = null;
+      },
+    );
+
+    const discard = fixture.runtime.feeding.discardBreastfeedingTimer();
+    await discardStarted.promise;
+    const ordinarySave = fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 60, contents: 'formula',
+    });
+    await vi.waitFor(() => expect(clock).toHaveBeenCalledOnce());
+    expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
+
+    finishDiscard.resolve();
+    await discard;
+    await ordinarySave;
+    expect(fixture.feedingRepository.save).toHaveBeenCalledOnce();
   });
 });

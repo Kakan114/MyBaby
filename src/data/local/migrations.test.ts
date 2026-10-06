@@ -78,10 +78,10 @@ describe('local database migrations', () => {
     await migrateLocalDatabase(database);
 
     expect(database.userVersion).toBe(LATEST_LOCAL_DATABASE_VERSION);
-    expect(database.transactionCount).toBe(3);
-    expect(database.committedTransactionCount).toBe(3);
+    expect(database.transactionCount).toBe(4);
+    expect(database.committedTransactionCount).toBe(4);
     expect(database.rolledBackTransactionCount).toBe(0);
-    expect(database.executedStatements).toHaveLength(12);
+    expect(database.executedStatements).toHaveLength(16);
     expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
     expect(database.executedStatements[1]).toContain('CREATE TABLE children');
     expect(database.executedStatements[1]).toContain('id TEXT PRIMARY KEY NOT NULL');
@@ -104,6 +104,12 @@ describe('local database migrations', () => {
     expect(database.executedStatements[9]).toContain('CREATE TABLE feeding_events');
     expect(database.executedStatements[10]).toBe('PRAGMA user_version = 3;');
     expect(database.executedStatements[11]).toBe('COMMIT;');
+    expect(database.executedStatements[12]).toBe('BEGIN IMMEDIATE;');
+    expect(database.executedStatements[13]).toContain(
+      'CREATE TABLE breastfeeding_timer_session',
+    );
+    expect(database.executedStatements[14]).toBe('PRAGMA user_version = 4;');
+    expect(database.executedStatements[15]).toBe('COMMIT;');
   });
 
   it('migrates version 1 through version 3 without selecting an existing child', async () => {
@@ -111,9 +117,9 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(3);
-    expect(database.transactionCount).toBe(2);
-    expect(database.executedStatements).toHaveLength(8);
+    expect(database.userVersion).toBe(4);
+    expect(database.transactionCount).toBe(3);
+    expect(database.executedStatements).toHaveLength(12);
     expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE active_child_selection');
@@ -134,15 +140,21 @@ describe('local database migrations', () => {
     expect(database.executedStatements[5]).toContain('CREATE TABLE feeding_events');
     expect(database.executedStatements[6]).toBe('PRAGMA user_version = 3;');
     expect(database.executedStatements[7]).toBe('COMMIT;');
+    expect(database.executedStatements[8]).toBe('BEGIN IMMEDIATE;');
+    expect(database.executedStatements[9]).toContain(
+      'CREATE TABLE breastfeeding_timer_session',
+    );
+    expect(database.executedStatements[10]).toBe('PRAGMA user_version = 4;');
+    expect(database.executedStatements[11]).toBe('COMMIT;');
   });
 
-  it('migrates version 2 to version 3 with the constrained feeding schema', async () => {
+  it('migrates version 2 through version 4 with constrained schemas', async () => {
     const database = new FakeMigrationDatabase(2);
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(3);
-    expect(database.transactionCount).toBe(1);
+    expect(database.userVersion).toBe(4);
+    expect(database.transactionCount).toBe(2);
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE feeding_events');
     expect(schema).toContain('FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE');
@@ -154,16 +166,35 @@ describe('local database migrations', () => {
     expect(schema).toContain('left_duration_seconds IS NULL');
     expect(schema).toContain("typeof(amount_tenths_ml) = 'integer'");
     expect(schema).not.toMatch(/created_at|updated_at|notes|sync|user_id|server/i);
+    expect(database.executedStatements[2]).toBe('PRAGMA user_version = 3;');
+    expect(database.executedStatements[4]).toBe('BEGIN IMMEDIATE;');
+    expect(database.executedStatements[5]).toContain(
+      'CREATE TABLE breastfeeding_timer_session',
+    );
+    expect(database.executedStatements[6]).toBe('PRAGMA user_version = 4;');
+    expect(database.executedStatements[7]).toBe('COMMIT;');
+  });
+
+  it('migrates version 3 to version 4 with the timer singleton schema', async () => {
+    const database = new FakeMigrationDatabase(3);
+
+    await migrateLocalDatabase(database);
+
+    expect(database.userVersion).toBe(4);
+    expect(database.transactionCount).toBe(1);
+    const schema = database.executedStatements[1];
+    expect(schema).toContain('CREATE TABLE breastfeeding_timer_session');
+    expect(schema).toContain('id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1)');
+    expect(schema).toContain('FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE');
+    expect(schema).toContain("state IN ('running', 'paused', 'finished')");
+    expect(schema).not.toMatch(/sync|server|user_id|updated_at/i);
     expect(database.executedStatements).toEqual([
-      'BEGIN IMMEDIATE;',
-      schema,
-      'PRAGMA user_version = 3;',
-      'COMMIT;',
+      'BEGIN IMMEDIATE;', schema, 'PRAGMA user_version = 4;', 'COMMIT;',
     ]);
   });
 
-  it('does nothing when the database is already at version 3', async () => {
-    const database = new FakeMigrationDatabase(3);
+  it('does nothing when the database is already at version 4', async () => {
+    const database = new FakeMigrationDatabase(4);
 
     await migrateLocalDatabase(database);
 
@@ -172,7 +203,7 @@ describe('local database migrations', () => {
   });
 
   it('rejects a schema version newer than the app supports', async () => {
-    const database = new FakeMigrationDatabase(4);
+    const database = new FakeMigrationDatabase(5);
 
     await expect(migrateLocalDatabase(database)).rejects.toMatchObject({
       code: 'unsupported-database-version',
@@ -180,18 +211,18 @@ describe('local database migrations', () => {
     expect(database.transactionCount).toBe(0);
   });
 
-  it('rolls back a failed version 2 migration without advancing user_version', async () => {
-    const database = new FakeMigrationDatabase(2, 'CREATE TABLE feeding_events');
+  it('rolls back a failed version 3 migration without advancing user_version', async () => {
+    const database = new FakeMigrationDatabase(3, 'CREATE TABLE breastfeeding_timer_session');
 
     const error = await migrateLocalDatabase(database).catch((reason: unknown) => reason);
 
-    expect(database.userVersion).toBe(2);
+    expect(database.userVersion).toBe(3);
     expect(database.committedTransactionCount).toBe(0);
     expect(database.rolledBackTransactionCount).toBe(1);
     expect(database.executedStatements).toHaveLength(3);
     expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
     expect(database.executedStatements[1]).toContain(
-      'CREATE TABLE feeding_events',
+      'CREATE TABLE breastfeeding_timer_session',
     );
     expect(database.executedStatements[2]).toBe('ROLLBACK;');
     expect(error).toMatchObject({ code: 'migration-failed' });
@@ -199,17 +230,17 @@ describe('local database migrations', () => {
   });
 
   it('rolls back the pending user_version when commit fails', async () => {
-    const database = new FakeMigrationDatabase(2, 'COMMIT;');
+    const database = new FakeMigrationDatabase(3, 'COMMIT;');
 
     await expect(migrateLocalDatabase(database)).rejects.toMatchObject({
       code: 'migration-failed',
     });
 
-    expect(database.userVersion).toBe(2);
+    expect(database.userVersion).toBe(3);
     expect(database.committedTransactionCount).toBe(0);
     expect(database.rolledBackTransactionCount).toBe(1);
     expect(database.executedStatements.slice(-3)).toEqual([
-      'PRAGMA user_version = 3;',
+      'PRAGMA user_version = 4;',
       'COMMIT;',
       'ROLLBACK;',
     ]);
@@ -217,8 +248,8 @@ describe('local database migrations', () => {
 
   it('does not let rollback failure replace the sanitized migration failure', async () => {
     const database = new FakeMigrationDatabase(
-      2,
-      'CREATE TABLE feeding_events',
+      3,
+      'CREATE TABLE breastfeeding_timer_session',
       true,
     );
 
@@ -226,7 +257,7 @@ describe('local database migrations', () => {
       (reason: unknown) => reason,
     );
 
-    expect(database.userVersion).toBe(2);
+    expect(database.userVersion).toBe(3);
     expect(database.rolledBackTransactionCount).toBe(1);
     expect(database.executedStatements.at(-1)).toBe('ROLLBACK;');
     expect(error).toMatchObject({ code: 'migration-failed' });

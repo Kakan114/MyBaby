@@ -5,6 +5,7 @@ import { SqliteActiveChildRepository } from '../features/children/data/sqlite-ac
 import { SqliteChildRepository } from '../features/children/data/sqlite-child-repository';
 import { ExpoFeedingIdGenerator } from '../features/feeding/data/expo-feeding-id-generator';
 import { SqliteFeedingRepository } from '../features/feeding/data/sqlite-feeding-repository';
+import { SqliteBreastfeedingTimerRepository } from '../features/feeding/data/sqlite-breastfeeding-timer-repository';
 
 import { createAppRuntime, type AppRuntime } from './app-runtime';
 
@@ -15,6 +16,8 @@ export function createProductionAppRuntime(): AppRuntime {
       new SqliteActiveChildRepository(database),
     createChildRepository: (database) => new SqliteChildRepository(database),
     createFeedingRepository: (database) => new SqliteFeedingRepository(database),
+    createBreastfeedingTimerRepository: (database) =>
+      new SqliteBreastfeedingTimerRepository(database),
     childIdGenerator: new ExpoChildIdGenerator(),
     feedingIdGenerator: new ExpoFeedingIdGenerator(),
     getCurrentCalendarDate: getCurrentLocalCalendarDate,

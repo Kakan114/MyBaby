@@ -1,3 +1,3 @@
 # Feeding presentation
 
-The completed-feeding screen accepts Swedish minute and millilitre input, then submits feeding-specific details through `FeedingRuntime`. The runtime supplies the active child, ID, and current instant. An uncertain write stays locked to avoid blindly creating a duplicate event.
+The Swedish feeding screen makes the breastfeeding timer primary, keeps manual breast duration behind a secondary action, and leaves bottle entry directly available. Running, paused, and finished-unsaved sessions can be discarded only through an explicit destructive confirmation. A feature provider above the tabs restores persisted timer state across navigation/remount and refreshes on app resume. Its interval only recalculates display projection; transition, discard, and save authority remains in the runtime and encrypted database. Uncertain operations re-read canonical state before another action is possible.
