@@ -1,3 +1,3 @@
-# Presentation
+# Feeding presentation
 
-Future feeding screens, feature-specific components, and hooks belong here. They may depend on feeding application and domain code, but not on data-source details.
+The completed-feeding screen accepts Swedish minute and millilitre input, then submits feeding-specific details through `FeedingRuntime`. The runtime supplies the active child, ID, and current instant. An uncertain write stays locked to avoid blindly creating a duplicate event.

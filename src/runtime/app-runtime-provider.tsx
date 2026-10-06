@@ -8,10 +8,11 @@ import {
   useState,
 } from 'react';
 
-import type { ChildrenRuntime } from './app-runtime';
+import type { ChildrenRuntime, FeedingRuntime } from './app-runtime';
 import { createProductionAppRuntime } from './create-production-app-runtime';
 
 const ChildrenRuntimeContext = createContext<ChildrenRuntime | null>(null);
+const FeedingRuntimeContext = createContext<FeedingRuntime | null>(null);
 
 export function AppRuntimeProvider({ children }: PropsWithChildren) {
   const [runtime] = useState(createProductionAppRuntime);
@@ -25,9 +26,21 @@ export function AppRuntimeProvider({ children }: PropsWithChildren) {
 
   return (
     <ChildrenRuntimeContext.Provider value={runtime.children}>
-      {children}
+      <FeedingRuntimeContext.Provider value={runtime.feeding}>
+        {children}
+      </FeedingRuntimeContext.Provider>
     </ChildrenRuntimeContext.Provider>
   );
+}
+
+export function useFeedingRuntime(): FeedingRuntime {
+  const runtime = useContext(FeedingRuntimeContext);
+
+  if (runtime === null) {
+    throw new Error('useFeedingRuntime must be used within AppRuntimeProvider.');
+  }
+
+  return runtime;
 }
 
 export function useChildrenRuntime(): ChildrenRuntime {

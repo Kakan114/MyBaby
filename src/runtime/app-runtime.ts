@@ -21,6 +21,13 @@ import {
 } from '../features/children/application/get-children-bootstrap-status';
 import type { CalendarDate } from '../features/children/domain/calendar-date';
 import type { Child } from '../features/children/domain/child';
+import type { FeedingIdGenerator } from '../features/feeding/application/feeding-id-generator';
+import type { FeedingRepository } from '../features/feeding/application/feeding-repository';
+import { recordFeeding as recordFeedingUseCase } from '../features/feeding/application/record-feeding';
+import type {
+  FeedingDetails,
+  FeedingEvent,
+} from '../features/feeding/domain/feeding-event';
 
 export type ChildrenRuntime = Readonly<{
   createChild(request: CreateChildRequest): Promise<Child>;
@@ -32,10 +39,24 @@ export type ChildrenRuntime = Readonly<{
   setActiveChild(id: string): Promise<Child>;
 }>;
 
+export type FeedingRuntime = Readonly<{
+  recordFeeding(details: FeedingDetails): Promise<FeedingEvent>;
+}>;
+
 export type AppRuntime = Readonly<{
   children: ChildrenRuntime;
+  feeding: FeedingRuntime;
   close(): Promise<void>;
 }>;
+
+export class FeedingRuntimeError extends Error {
+  readonly code = 'active-child-required' as const;
+
+  constructor() {
+    super('An active child is required to record feeding.');
+    this.name = 'FeedingRuntimeError';
+  }
+}
 
 export type AppRuntimeErrorCode = 'local-data-unavailable' | 'runtime-closed';
 
@@ -58,14 +79,18 @@ export type AppRuntimeDependencies<TDatabase extends RuntimeDatabaseConnection> 
   openDatabase(): Promise<TDatabase>;
   createActiveChildRepository(database: TDatabase): ActiveChildRepository;
   createChildRepository(database: TDatabase): ChildRepository;
+  createFeedingRepository(database: TDatabase): FeedingRepository;
   childIdGenerator: ChildIdGenerator;
+  feedingIdGenerator: FeedingIdGenerator;
   getCurrentCalendarDate(): CalendarDate;
+  getCurrentEpochMs(): number;
 }>;
 
 type InitializedRuntime<TDatabase extends RuntimeDatabaseConnection> = Readonly<{
   database: TDatabase;
   activeChildRepository: ActiveChildRepository;
   childRepository: ChildRepository;
+  feedingRepository: FeedingRepository;
 }>;
 
 function sanitizeActiveChildRepository(
@@ -154,6 +179,34 @@ function sanitizeChildIdGenerator(generator: ChildIdGenerator): ChildIdGenerator
   };
 }
 
+function sanitizeFeedingRepository(repository: FeedingRepository): FeedingRepository {
+  return {
+    async save(event) {
+      try {
+        await repository.save(event);
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+  };
+}
+
+function sanitizeFeedingIdGenerator(generator: FeedingIdGenerator): FeedingIdGenerator {
+  return {
+    generate() {
+      try {
+        const id = generator.generate();
+        if (id.trim().length === 0) {
+          throw new Error('Invalid generated feeding ID.');
+        }
+        return id;
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+  };
+}
+
 export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   dependencies: AppRuntimeDependencies<TDatabase>,
 ): AppRuntime {
@@ -163,6 +216,9 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   let closed = false;
   const activeOperations = new Set<Promise<void>>();
   const childIdGenerator = sanitizeChildIdGenerator(dependencies.childIdGenerator);
+  const feedingIdGenerator = sanitizeFeedingIdGenerator(
+    dependencies.feedingIdGenerator,
+  );
 
   async function closeDatabase(database: TDatabase): Promise<void> {
     try {
@@ -201,6 +257,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
 
       let childRepository: ChildRepository;
       let activeChildRepository: ActiveChildRepository;
+      let feedingRepository: FeedingRepository;
 
       try {
         activeChildRepository = sanitizeActiveChildRepository(
@@ -208,6 +265,9 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         );
         childRepository = sanitizeChildRepository(
           dependencies.createChildRepository(database),
+        );
+        feedingRepository = sanitizeFeedingRepository(
+          dependencies.createFeedingRepository(database),
         );
       } catch {
         await closeDatabase(database);
@@ -223,6 +283,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         database,
         activeChildRepository,
         childRepository,
+        feedingRepository,
       };
       return initializedRuntime;
     })();
@@ -341,8 +402,46 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     },
   };
 
+  const feeding: FeedingRuntime = {
+    recordFeeding(details) {
+      return runOperation(async () => {
+        const {
+          activeChildRepository,
+          childRepository,
+          feedingRepository,
+        } = await initialize();
+        const activeChild = await getActiveChildUseCase({
+          activeChildRepository,
+          childRepository,
+        });
+
+        if (activeChild === null) {
+          throw new FeedingRuntimeError();
+        }
+
+        let occurredAtEpochMs: number;
+        try {
+          occurredAtEpochMs = dependencies.getCurrentEpochMs();
+          if (!Number.isSafeInteger(occurredAtEpochMs) || occurredAtEpochMs < 0) {
+            throw new Error('Invalid runtime clock value.');
+          }
+        } catch {
+          throw new AppRuntimeError('local-data-unavailable');
+        }
+
+        return recordFeedingUseCase(
+          { feedingIdGenerator, feedingRepository },
+          activeChild.id,
+          occurredAtEpochMs,
+          details,
+        );
+      });
+    },
+  };
+
   return {
     children,
+    feeding,
     close() {
       if (closePromise !== null) {
         return closePromise;

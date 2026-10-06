@@ -12,6 +12,8 @@ import {
   ChildValidationError,
   type Child,
 } from '../features/children/domain/child';
+import type { FeedingRepository } from '../features/feeding/application/feeding-repository';
+import type { FeedingEvent } from '../features/feeding/domain/feeding-event';
 
 import {
   AppRuntimeError,
@@ -49,6 +51,10 @@ class FakeActiveChildRepository implements ActiveChildRepository {
   });
 }
 
+class FakeFeedingRepository implements FeedingRepository {
+  readonly save = vi.fn(async (_event: FeedingEvent): Promise<void> => undefined);
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -63,10 +69,13 @@ function createDeferred<T>() {
 function createRuntimeFixture(options?: {
   openDatabase?: () => Promise<FakeDatabase>;
   getCurrentCalendarDate?: () => CalendarDate;
+  getCurrentEpochMs?: () => number;
+  feedingIdGenerator?: { generate(): string };
 }) {
   const database = new FakeDatabase();
   const activeChildRepository = new FakeActiveChildRepository();
   const childRepository = new FakeChildRepository();
+  const feedingRepository = new FakeFeedingRepository();
   const openDatabase = vi.fn(options?.openDatabase ?? (async () => database));
   const createChildRepository = vi.fn(() => childRepository);
   const createActiveChildRepository = vi.fn(() => activeChildRepository);
@@ -74,14 +83,20 @@ function createRuntimeFixture(options?: {
     openDatabase,
     createActiveChildRepository,
     createChildRepository,
+    createFeedingRepository: () => feedingRepository,
     childIdGenerator: { generate: () => 'generated-child-id' },
+    feedingIdGenerator:
+      options?.feedingIdGenerator ?? { generate: () => 'generated-feeding-id' },
     getCurrentCalendarDate: options?.getCurrentCalendarDate ?? (() => asOf),
+    getCurrentEpochMs:
+      options?.getCurrentEpochMs ?? (() => 1_765_000_000_123),
   });
 
   return {
     database,
     activeChildRepository,
     childRepository,
+    feedingRepository,
     createActiveChildRepository,
     createChildRepository,
     openDatabase,
@@ -223,8 +238,11 @@ describe('application runtime', () => {
       openDatabase,
       createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => childRepository,
+      createFeedingRepository: () => new FakeFeedingRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
+      feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       getCurrentCalendarDate: () => asOf,
+      getCurrentEpochMs: () => 1_765_000_000_123,
     });
 
     await expect(runtime.children.getChildById('child')).rejects.toMatchObject({
@@ -242,8 +260,11 @@ describe('application runtime', () => {
       createChildRepository: () => {
         throw new Error('repository construction exposed native details');
       },
+      createFeedingRepository: () => new FakeFeedingRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
+      feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       getCurrentCalendarDate: () => asOf,
+      getCurrentEpochMs: () => 1_765_000_000_123,
     });
 
     const error = await runtime.children
@@ -319,12 +340,15 @@ describe('application runtime', () => {
       openDatabase: async () => database,
       createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => new FakeChildRepository(),
+      createFeedingRepository: () => new FakeFeedingRepository(),
       childIdGenerator: {
         generate: () => {
           throw new Error('raw native UUID failure');
         },
       },
+      feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       getCurrentCalendarDate: () => asOf,
+      getCurrentEpochMs: () => 1_765_000_000_123,
     });
 
     const error = await runtime.children
@@ -665,6 +689,137 @@ describe('active child summary runtime boundary', () => {
       .rejects.toEqual(new AppRuntimeError('runtime-closed'));
     deferred.resolve(null);
     await expect(operation).resolves.toBeNull();
+    await closing;
+    expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
+  });
+});
+
+describe('feeding runtime boundary', () => {
+  async function createActiveChildFixture(options?: Parameters<typeof createRuntimeFixture>[0]) {
+    const fixture = createRuntimeFixture(options);
+    const child: Child = {
+      id: 'active-child',
+      displayName: 'Mio',
+      dateOfBirth: createCalendarDate('2025-01-10'),
+    };
+    fixture.childRepository.children.set(child.id, child);
+    fixture.activeChildRepository.activeChildId = child.id;
+    return { ...fixture, child };
+  }
+
+  it('records for the resolved active child with injected ID and epoch clock', async () => {
+    const clock = vi.fn(() => 1_765_123_456_789);
+    const fixture = await createActiveChildFixture({ getCurrentEpochMs: clock });
+
+    const event = await fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle',
+      amountMl: 72.5,
+      contents: 'expressed-breast-milk',
+    });
+
+    expect(event).toEqual({
+      id: 'generated-feeding-id',
+      childId: fixture.child.id,
+      occurredAtEpochMs: 1_765_123_456_789,
+      kind: 'bottle',
+      amountMl: 72.5,
+      contents: 'expressed-breast-milk',
+    });
+    expect(fixture.feedingRepository.save).toHaveBeenCalledWith(event);
+    expect(clock).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a missing or stale active child without persisting', async () => {
+    const missing = createRuntimeFixture();
+    await expect(missing.runtime.feeding.recordFeeding({
+      kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0,
+    })).rejects.toMatchObject({ code: 'active-child-required' });
+
+    const stale = createRuntimeFixture();
+    stale.activeChildRepository.activeChildId = 'deleted-child';
+    await expect(stale.runtime.feeding.recordFeeding({
+      kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0,
+    })).rejects.toMatchObject({ code: 'active-child-required' });
+    expect(stale.activeChildRepository.clearActiveChildIdIfMatches)
+      .toHaveBeenCalledWith('deleted-child');
+    expect(missing.feedingRepository.save).not.toHaveBeenCalled();
+    expect(stale.feedingRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes repository, ID-generator, and clock failures', async () => {
+    const repositoryFailure = await createActiveChildFixture();
+    repositoryFailure.feedingRepository.save.mockRejectedValueOnce(
+      new Error('raw SQLite database path'),
+    );
+    const repositoryError = await repositoryFailure.runtime.feeding
+      .recordFeeding({ kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0 })
+      .catch((reason: unknown) => reason);
+
+    const idFailure = await createActiveChildFixture({
+      feedingIdGenerator: { generate: () => { throw new Error('raw native UUID'); } },
+    });
+    const idError = await idFailure.runtime.feeding
+      .recordFeeding({ kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0 })
+      .catch((reason: unknown) => reason);
+
+    const clockFailure = await createActiveChildFixture({
+      getCurrentEpochMs: () => { throw new Error('raw native clock'); },
+    });
+    const clockError = await clockFailure.runtime.feeding
+      .recordFeeding({ kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0 })
+      .catch((reason: unknown) => reason);
+
+    const invalidClock = await createActiveChildFixture({
+      getCurrentEpochMs: () => 10.5,
+    });
+    const invalidClockError = await invalidClock.runtime.feeding
+      .recordFeeding({ kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0 })
+      .catch((reason: unknown) => reason);
+
+    for (const error of [repositoryError, idError, clockError, invalidClockError]) {
+      expect(error).toEqual(new AppRuntimeError('local-data-unavailable'));
+      expect(String(error)).not.toMatch(/SQLite|UUID|clock/);
+    }
+  });
+
+  it('sanitizes an invalid generated feeding ID', async () => {
+    const fixture = await createActiveChildFixture({
+      feedingIdGenerator: { generate: () => '   ' },
+    });
+
+    await expect(fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 60, contents: 'formula',
+    })).rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+    expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('preserves domain validation errors', async () => {
+    const fixture = await createActiveChildFixture();
+
+    const error = await fixture.runtime.feeding.recordFeeding({
+      kind: 'breast', leftDurationSeconds: 0, rightDurationSeconds: 0,
+    }).catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ code: 'invalid-duration' });
+    expect(error).not.toBeInstanceOf(AppRuntimeError);
+  });
+
+  it('waits for an active feeding write before closing', async () => {
+    const fixture = await createActiveChildFixture();
+    const write = createDeferred<void>();
+    fixture.feedingRepository.save.mockImplementationOnce(() => write.promise);
+
+    const operation = fixture.runtime.feeding.recordFeeding({
+      kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0,
+    });
+    await vi.waitFor(() => expect(fixture.feedingRepository.save).toHaveBeenCalledOnce());
+    const closing = fixture.runtime.close();
+    expect(fixture.database.closeAsync).not.toHaveBeenCalled();
+    await expect(fixture.runtime.feeding.recordFeeding({
+      kind: 'breast', leftDurationSeconds: 60, rightDurationSeconds: 0,
+    })).rejects.toEqual(new AppRuntimeError('runtime-closed'));
+    write.resolve();
+    await operation;
     await closing;
     expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
   });

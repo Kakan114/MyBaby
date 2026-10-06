@@ -85,6 +85,45 @@ export const sv = {
       yearsAndMonths: '{{years}} och {{months}}',
     },
   },
+  feeding: {
+    title: 'Logga matning',
+    description: 'Registrera en avslutad matning för det aktiva barnet.',
+    kind: {
+      label: 'Typ av matning',
+      breast: 'Amning',
+      bottle: 'Flaska',
+    },
+    breast: {
+      left: 'Vänster (minuter)',
+      right: 'Höger (minuter)',
+    },
+    bottle: {
+      amount: 'Mängd (ml)',
+      amountPlaceholder: 'Till exempel 72,5',
+      contents: {
+        label: 'Innehåll',
+        'expressed-breast-milk': 'Bröstmjölk',
+        formula: 'Ersättning',
+        mixed: 'Bröstmjölk + ersättning',
+      },
+      mixedHint: 'Blandat betyder att samma flaska innehåller både bröstmjölk och ersättning.',
+    },
+    save: 'Spara matning',
+    saving: 'Sparar…',
+    errors: {
+      duration: 'Ange en giltig tid över noll för minst en sida.',
+      amount: 'Ange en mängd över noll, med högst en decimal.',
+    },
+    success: {
+      title: 'Matningen är sparad',
+      description: 'Matningen har sparats lokalt för det aktiva barnet.',
+      another: 'Logga en till',
+    },
+    uncertain: {
+      title: 'Matningen kunde inte bekräftas',
+      description: 'MyBaby kan inte säkert avgöra om matningen sparades. Försök inte spara samma matning igen just nu.',
+    },
+  },
   screens: {
     today: {
       title: 'Idag',

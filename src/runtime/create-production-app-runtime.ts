@@ -3,6 +3,8 @@ import { ExpoChildIdGenerator } from '../features/children/data/expo-child-id-ge
 import { getCurrentLocalCalendarDate } from '../features/children/data/local-calendar-date';
 import { SqliteActiveChildRepository } from '../features/children/data/sqlite-active-child-repository';
 import { SqliteChildRepository } from '../features/children/data/sqlite-child-repository';
+import { ExpoFeedingIdGenerator } from '../features/feeding/data/expo-feeding-id-generator';
+import { SqliteFeedingRepository } from '../features/feeding/data/sqlite-feeding-repository';
 
 import { createAppRuntime, type AppRuntime } from './app-runtime';
 
@@ -12,7 +14,10 @@ export function createProductionAppRuntime(): AppRuntime {
     createActiveChildRepository: (database) =>
       new SqliteActiveChildRepository(database),
     createChildRepository: (database) => new SqliteChildRepository(database),
+    createFeedingRepository: (database) => new SqliteFeedingRepository(database),
     childIdGenerator: new ExpoChildIdGenerator(),
+    feedingIdGenerator: new ExpoFeedingIdGenerator(),
     getCurrentCalendarDate: getCurrentLocalCalendarDate,
+    getCurrentEpochMs: Date.now,
   });
 }

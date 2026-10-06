@@ -1,4 +1,4 @@
-export const LATEST_LOCAL_DATABASE_VERSION = 2;
+export const LATEST_LOCAL_DATABASE_VERSION = 3;
 
 export interface LocalMigrationTransaction {
   execAsync(source: string): Promise<void>;
@@ -48,6 +48,47 @@ const migrations: readonly Migration[] = [
         id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
         child_id TEXT NOT NULL,
         FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
+      );
+    `);
+  },
+  async (transaction) => {
+    await transaction.execAsync(`
+      CREATE TABLE feeding_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        child_id TEXT NOT NULL,
+        occurred_at_epoch_ms INTEGER NOT NULL
+          CHECK (typeof(occurred_at_epoch_ms) = 'integer' AND occurred_at_epoch_ms >= 0),
+        kind TEXT NOT NULL CHECK (kind IN ('breast', 'bottle')),
+        left_duration_seconds INTEGER,
+        right_duration_seconds INTEGER,
+        amount_tenths_ml INTEGER,
+        contents TEXT,
+        FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE,
+        CHECK (
+          (
+            kind = 'breast'
+            AND left_duration_seconds IS NOT NULL
+            AND typeof(left_duration_seconds) = 'integer'
+            AND left_duration_seconds >= 0
+            AND right_duration_seconds IS NOT NULL
+            AND typeof(right_duration_seconds) = 'integer'
+            AND right_duration_seconds >= 0
+            AND left_duration_seconds + right_duration_seconds > 0
+            AND amount_tenths_ml IS NULL
+            AND contents IS NULL
+          )
+          OR
+          (
+            kind = 'bottle'
+            AND left_duration_seconds IS NULL
+            AND right_duration_seconds IS NULL
+            AND amount_tenths_ml IS NOT NULL
+            AND typeof(amount_tenths_ml) = 'integer'
+            AND amount_tenths_ml > 0
+            AND contents IS NOT NULL
+            AND contents IN ('expressed-breast-milk', 'formula', 'mixed')
+          )
+        )
       );
     `);
   },
