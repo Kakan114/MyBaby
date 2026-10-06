@@ -27,6 +27,7 @@ class FakeChildRepository implements ChildRepository {
   readonly children = new Map<string, Child>();
   readonly getById = vi.fn(async (id: string) => this.children.get(id) ?? null);
   readonly hasChildren = vi.fn(async () => this.children.size > 0);
+  readonly listChildren = vi.fn(async () => [...this.children.values()]);
   readonly save = vi.fn(async (child: Child) => {
     this.children.set(child.id, child);
   });
@@ -157,6 +158,42 @@ describe('application runtime', () => {
 
     await expect(fixture.runtime.children.getChildById(child.id)).resolves.toBe(child);
     expect(fixture.childRepository.getById).toHaveBeenCalledWith(child.id);
+  });
+
+  it('exposes the deterministic child list through the application runtime', async () => {
+    const fixture = createRuntimeFixture();
+    const youngerChild: Child = {
+      id: 'child-younger',
+      displayName: 'Mio',
+      dateOfBirth: createCalendarDate('2025-01-10'),
+    };
+    const olderChild: Child = {
+      id: 'child-older',
+      displayName: 'Mira',
+      dateOfBirth: createCalendarDate('2023-05-10'),
+    };
+    fixture.childRepository.children.set(youngerChild.id, youngerChild);
+    fixture.childRepository.children.set(olderChild.id, olderChild);
+
+    await expect(fixture.runtime.children.listChildren()).resolves.toEqual([
+      youngerChild,
+      olderChild,
+    ]);
+    expect(fixture.childRepository.listChildren).toHaveBeenCalledOnce();
+  });
+
+  it('sanitizes child-list infrastructure failures', async () => {
+    const fixture = createRuntimeFixture();
+    fixture.childRepository.listChildren.mockRejectedValueOnce(
+      new Error('raw SQLite child-list failure'),
+    );
+
+    const error = await fixture.runtime.children
+      .listChildren()
+      .catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ code: 'local-data-unavailable' });
+    expect(String(error)).not.toContain('child-list failure');
   });
 
   it('sanitizes initialization failures', async () => {

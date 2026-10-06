@@ -14,6 +14,7 @@ import {
   type CreateChildRequest,
 } from '../features/children/application/create-child';
 import { getChildById as getChildByIdUseCase } from '../features/children/application/get-child-by-id';
+import { listChildren as listChildrenUseCase } from '../features/children/application/list-children';
 import {
   getChildrenBootstrapStatus as getChildrenBootstrapStatusUseCase,
   type ChildrenBootstrapStatus,
@@ -27,6 +28,7 @@ export type ChildrenRuntime = Readonly<{
   getChildById(id: string): Promise<Child | null>;
   getActiveChild(): Promise<Child | null>;
   getActiveChildSummary(): Promise<ActiveChildSummary | null>;
+  listChildren(): Promise<readonly Child[]>;
   setActiveChild(id: string): Promise<Child>;
 }>;
 
@@ -117,6 +119,14 @@ function sanitizeChildRepository(repository: ChildRepository): ChildRepository {
     async hasChildren() {
       try {
         return await repository.hasChildren();
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+
+    async listChildren() {
+      try {
+        return await repository.listChildren();
       } catch {
         throw new AppRuntimeError('local-data-unavailable');
       }
@@ -308,6 +318,14 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
           // Includes an invalid device clock or unexpected domain/data failures.
           throw new AppRuntimeError('local-data-unavailable');
         }
+      });
+    },
+
+    listChildren() {
+      return runOperation(async () => {
+        const { childRepository } = await initialize();
+
+        return listChildrenUseCase(childRepository);
       });
     },
 

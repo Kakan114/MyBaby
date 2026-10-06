@@ -5,6 +5,7 @@ import type { Child } from '../domain/child';
 type ChildRepositoryBindValue = string | number | null | boolean | Uint8Array | ArrayBuffer;
 
 export interface ChildRepositoryDatabase {
+  getAllAsync<T>(source: string, params: ChildRepositoryBindValue[]): Promise<T[]>;
   getFirstAsync<T>(source: string, params: ChildRepositoryBindValue[]): Promise<T | null>;
   runAsync(source: string, params: ChildRepositoryBindValue[]): Promise<unknown>;
 }
@@ -27,6 +28,12 @@ const SELECT_ANY_CHILD = `
   SELECT 1 AS present
   FROM children
   LIMIT 1;
+`;
+
+const SELECT_CHILDREN = `
+  SELECT id, display_name, date_of_birth
+  FROM children
+  ORDER BY date_of_birth DESC, id ASC;
 `;
 
 const UPSERT_CHILD = `
@@ -61,6 +68,12 @@ export class SqliteChildRepository implements ChildRepository {
     );
 
     return row !== null;
+  }
+
+  async listChildren(): Promise<readonly Child[]> {
+    const rows = await this.database.getAllAsync<ChildRow>(SELECT_CHILDREN, []);
+
+    return rows.map(mapChildRow);
   }
 
   async save(child: Child): Promise<void> {

@@ -18,6 +18,16 @@ class FakeChildDatabase implements ChildRepositoryDatabase {
   readonly reads: Array<{ source: string; params: readonly unknown[] }> = [];
   readonly writes: Array<{ source: string; params: readonly unknown[] }> = [];
 
+  async getAllAsync<T>(source: string, params: unknown[]): Promise<T[]> {
+    this.reads.push({ source, params });
+
+    return [...this.rows.values()]
+      .sort((left, right) =>
+        right.date_of_birth.localeCompare(left.date_of_birth) ||
+        left.id.localeCompare(right.id)
+      ) as T[];
+  }
+
   async getFirstAsync<T>(source: string, params: unknown[]): Promise<T | null> {
     this.reads.push({ source, params });
 
@@ -107,6 +117,67 @@ describe('SQLite child repository', () => {
     await expect(repository.hasChildren()).resolves.toBe(true);
     expect(database.reads[0].source).not.toContain('display_name');
     expect(database.reads[0].source).not.toContain('date_of_birth');
+  });
+
+  it('returns an empty child list', async () => {
+    const database = new FakeChildDatabase();
+    const repository = new SqliteChildRepository(database);
+
+    await expect(repository.listChildren()).resolves.toEqual([]);
+    expect(database.reads[0].params).toEqual([]);
+  });
+
+  it('returns one mapped child', async () => {
+    const database = new FakeChildDatabase();
+    database.rows.set(child.id, {
+      id: child.id,
+      display_name: child.displayName,
+      date_of_birth: child.dateOfBirth,
+    });
+    const repository = new SqliteChildRepository(database);
+
+    await expect(repository.listChildren()).resolves.toEqual([child]);
+  });
+
+  it('orders multiple children youngest first with ID as a stable tie-breaker', async () => {
+    const database = new FakeChildDatabase();
+    database.rows.set('child-z', {
+      id: 'child-z',
+      display_name: 'Zoe',
+      date_of_birth: '2025-01-10',
+    });
+    database.rows.set('child-a', {
+      id: 'child-a',
+      display_name: 'Alex',
+      date_of_birth: '2025-01-10',
+    });
+    database.rows.set('child-older', {
+      id: 'child-older',
+      display_name: 'Mira',
+      date_of_birth: '2023-05-10',
+    });
+    const repository = new SqliteChildRepository(database);
+
+    await expect(repository.listChildren()).resolves.toEqual([
+      {
+        id: 'child-a',
+        displayName: 'Alex',
+        dateOfBirth: '2025-01-10',
+      },
+      {
+        id: 'child-z',
+        displayName: 'Zoe',
+        dateOfBirth: '2025-01-10',
+      },
+      {
+        id: 'child-older',
+        displayName: 'Mira',
+        dateOfBirth: '2023-05-10',
+      },
+    ]);
+    expect(database.reads[0].source).toContain(
+      'ORDER BY date_of_birth DESC, id ASC',
+    );
   });
 
   it('upserts by ID using bound values and only the three Child fields', async () => {

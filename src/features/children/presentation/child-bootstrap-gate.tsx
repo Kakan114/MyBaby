@@ -19,6 +19,8 @@ import type { ChildrenBootstrapStatus } from '@/features/children/application/ge
 import { useChildrenRuntime } from '@/runtime/app-runtime-provider';
 import { lightColors, spacing } from '@/theme/tokens';
 
+import { ActiveChildSelectionRecoveryScreen } from './active-child-selection-recovery-screen';
+
 type ResolvedNavigationStatus = Extract<
   ChildrenBootstrapStatus['status'],
   'ready' | 'onboarding-required'
@@ -106,11 +108,8 @@ export function ChildBootstrapGate({ children }: ChildBootstrapGateProps) {
     );
   } else if (state === 'active-selection-required') {
     content = (
-      <RecoveryScreen
-        description={t('bootstrap.activeSelectionRequired.description')}
-        onRetry={refreshBootstrap}
-        retryLabel={t('bootstrap.retry')}
-        title={t('bootstrap.activeSelectionRequired.title')}
+      <ActiveChildSelectionRecoveryScreen
+        refreshBootstrap={refreshBootstrap}
       />
     );
   } else {

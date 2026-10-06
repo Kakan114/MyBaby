@@ -24,6 +24,7 @@ function fixture(dateOfBirth = '2024-02-29') {
   const childRepository: ChildRepository = {
     getById: vi.fn(async (id) => id === child.id ? child : null),
     hasChildren: vi.fn(async () => true),
+    listChildren: vi.fn(async () => [child]),
     save: vi.fn(async () => undefined),
   };
   return { child, activeChildRepository, childRepository };
