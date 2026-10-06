@@ -50,10 +50,35 @@ export const sv = {
       },
     },
   },
+  children: {
+    age: {
+      daysOld_one: '{{count}} dag gammal',
+      daysOld_other: '{{count}} dagar gammal',
+      days_one: '{{count}} dag',
+      days_other: '{{count}} dagar',
+      weeks_one: '{{count}} vecka',
+      weeks_other: '{{count}} veckor',
+      weeksAndDays: '{{weeks}} och {{days}}',
+      monthsAndDays: '{{months}} och {{days}}',
+      months_one: '{{count}} månad',
+      months_other: '{{count}} månader',
+      years_one: '{{count}} år',
+      years_other: '{{count}} år',
+      yearsAndMonths: '{{years}} och {{months}}',
+    },
+  },
   screens: {
     today: {
       title: 'Idag',
-      description: 'Din översikt kommer att visas här.',
+      loading: 'Läser barnets uppgifter…',
+      missing: {
+        title: 'Inget aktivt barn kunde hittas',
+        description: 'MyBaby behöver kontrollera dina sparade barnuppgifter. Försök igen.',
+      },
+      error: {
+        title: 'Det gick inte att läsa barnets uppgifter',
+        description: 'MyBaby kunde inte visa barnets namn och ålder. Försök igen.',
+      },
     },
     log: {
       title: 'Logga',

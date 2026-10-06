@@ -1,3 +1,7 @@
+import {
+  getActiveChildSummary as getActiveChildSummaryUseCase,
+  type ActiveChildSummary,
+} from '../features/children/application/get-active-child-summary';
 import type { ActiveChildRepository } from '../features/children/application/active-child-repository';
 import {
   getActiveChild as getActiveChildUseCase,
@@ -22,6 +26,7 @@ export type ChildrenRuntime = Readonly<{
   getBootstrapStatus(): Promise<ChildrenBootstrapStatus>;
   getChildById(id: string): Promise<Child | null>;
   getActiveChild(): Promise<Child | null>;
+  getActiveChildSummary(): Promise<ActiveChildSummary | null>;
   setActiveChild(id: string): Promise<Child>;
 }>;
 
@@ -288,6 +293,21 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         const { activeChildRepository, childRepository } = await initialize();
 
         return getActiveChildUseCase({ activeChildRepository, childRepository });
+      });
+    },
+
+    getActiveChildSummary() {
+      return runOperation(async () => {
+        const { activeChildRepository, childRepository } = await initialize();
+        try {
+          return await getActiveChildSummaryUseCase(
+            { activeChildRepository, childRepository },
+            dependencies.getCurrentCalendarDate(),
+          );
+        } catch {
+          // Includes an invalid device clock or unexpected domain/data failures.
+          throw new AppRuntimeError('local-data-unavailable');
+        }
       });
     },
 

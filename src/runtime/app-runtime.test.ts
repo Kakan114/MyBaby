@@ -559,3 +559,76 @@ describe('application runtime', () => {
     expect(fixture.openDatabase).not.toHaveBeenCalled();
   });
 });
+
+describe('active child summary runtime boundary', () => {
+  it('uses the injected date on every read and returns the saved display name', async () => {
+    let reference = createCalendarDate('2025-02-28');
+    const clock = vi.fn(() => reference);
+    const fixture = createRuntimeFixture({ getCurrentCalendarDate: clock });
+    const child = await fixture.runtime.children.createChild({
+      displayName: 'Mio',
+      dateOfBirth: '2024-02-29',
+    });
+    clock.mockClear();
+    await expect(fixture.runtime.children.getActiveChildSummary()).resolves.toEqual({
+      child, age: { years: 1, months: 0, days: 0, fullDays: 365, fullWeeks: 52, remainingWeekDays: 1 },
+    });
+    reference = createCalendarDate('2025-03-29');
+    await expect(fixture.runtime.children.getActiveChildSummary()).resolves.toMatchObject({
+      age: { years: 1, months: 1, days: 1 },
+    });
+    expect(clock).toHaveBeenCalledTimes(2);
+    expect(fixture.openDatabase).toHaveBeenCalledOnce();
+  });
+
+  it('returns null without turning missing selection into onboarding', async () => {
+    const fixture = createRuntimeFixture();
+    await expect(fixture.runtime.children.getActiveChildSummary()).resolves.toBeNull();
+    expect(fixture.childRepository.hasChildren).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes repository failures', async () => {
+    const fixture = createRuntimeFixture();
+    fixture.activeChildRepository.getActiveChildId.mockRejectedValueOnce(
+      new Error('secret SQL/path/key'),
+    );
+    await expect(fixture.runtime.children.getActiveChildSummary())
+      .rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+  });
+
+  it('sanitizes clock failures', async () => {
+    const fixture = createRuntimeFixture({
+      getCurrentCalendarDate: () => { throw new Error('private clock details'); },
+    });
+    await expect(fixture.runtime.children.getActiveChildSummary())
+      .rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+  });
+
+  it('safely rejects a clock rollback before birth', async () => {
+    let reference = asOf;
+    const fixture = createRuntimeFixture({ getCurrentCalendarDate: () => reference });
+    await fixture.runtime.children.createChild({
+      displayName: 'Mio',
+      dateOfBirth: '2025-06-15',
+    });
+    reference = createCalendarDate('2025-06-14');
+    await expect(fixture.runtime.children.getActiveChildSummary())
+      .rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+  });
+
+  it('waits for a summary read before closing and rejects further reads', async () => {
+    const fixture = createRuntimeFixture();
+    const deferred = createDeferred<string | null>();
+    fixture.activeChildRepository.getActiveChildId.mockImplementationOnce(() => deferred.promise);
+    const operation = fixture.runtime.children.getActiveChildSummary();
+    await vi.waitFor(() => expect(fixture.activeChildRepository.getActiveChildId).toHaveBeenCalled());
+    const closing = fixture.runtime.close();
+    expect(fixture.database.closeAsync).not.toHaveBeenCalled();
+    await expect(fixture.runtime.children.getActiveChildSummary())
+      .rejects.toEqual(new AppRuntimeError('runtime-closed'));
+    deferred.resolve(null);
+    await expect(operation).resolves.toBeNull();
+    await closing;
+    expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
+  });
+});

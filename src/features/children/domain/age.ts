@@ -87,3 +87,23 @@ export function getCalendarAge(dateOfBirth: CalendarDate, asOf: CalendarDate): C
     days: differenceInDays(monthAnchor, asOf),
   };
 }
+
+/** Calendar age plus whole calendar days/weeks since birth for infant precision. */
+export type ChildAge = CalendarAge & Readonly<{
+  fullDays: number;
+  fullWeeks: number;
+  remainingWeekDays: number;
+}>;
+
+export function getChildAge(dateOfBirth: CalendarDate, asOf: CalendarDate): ChildAge {
+  const calendarAge = getCalendarAge(dateOfBirth, asOf);
+  const fullDays = getFullDaysSinceBirth(dateOfBirth, asOf);
+  const fullWeeks = getFullWeeksSinceBirth(dateOfBirth, asOf);
+
+  return {
+    ...calendarAge,
+    fullDays,
+    fullWeeks,
+    remainingWeekDays: fullDays - fullWeeks * 7,
+  };
+}
