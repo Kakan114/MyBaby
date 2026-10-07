@@ -1,4 +1,4 @@
-export const LATEST_LOCAL_DATABASE_VERSION = 4;
+export const LATEST_LOCAL_DATABASE_VERSION = 5;
 
 export interface LocalMigrationTransaction {
   execAsync(source: string): Promise<void>;
@@ -149,6 +149,39 @@ const migrations: readonly Migration[] = [
             AND finished_at_epoch_ms <= 9007199254740991
           )
         )
+      );
+    `);
+  },
+  async (transaction) => {
+    await transaction.execAsync(`
+      CREATE TABLE sleep_events (
+        id TEXT PRIMARY KEY NOT NULL CHECK (length(trim(id)) > 0),
+        child_id TEXT NOT NULL,
+        started_at_epoch_ms INTEGER NOT NULL
+          CHECK (
+            typeof(started_at_epoch_ms) = 'integer'
+            AND started_at_epoch_ms >= 0
+            AND started_at_epoch_ms <= 8640000000000000
+          ),
+        ended_at_epoch_ms INTEGER NOT NULL
+          CHECK (
+            typeof(ended_at_epoch_ms) = 'integer'
+            AND ended_at_epoch_ms > started_at_epoch_ms
+            AND ended_at_epoch_ms <= 8640000000000000
+          ),
+        FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE active_sleep_sessions (
+        child_id TEXT PRIMARY KEY NOT NULL,
+        id TEXT NOT NULL UNIQUE CHECK (length(trim(id)) > 0),
+        started_at_epoch_ms INTEGER NOT NULL
+          CHECK (
+            typeof(started_at_epoch_ms) = 'integer'
+            AND started_at_epoch_ms >= 0
+            AND started_at_epoch_ms <= 8640000000000000
+          ),
+        FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
       );
     `);
   },

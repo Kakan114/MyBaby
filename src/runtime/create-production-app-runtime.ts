@@ -6,6 +6,8 @@ import { SqliteChildRepository } from '../features/children/data/sqlite-child-re
 import { ExpoFeedingIdGenerator } from '../features/feeding/data/expo-feeding-id-generator';
 import { SqliteFeedingRepository } from '../features/feeding/data/sqlite-feeding-repository';
 import { SqliteBreastfeedingTimerRepository } from '../features/feeding/data/sqlite-breastfeeding-timer-repository';
+import { ExpoSleepIdGenerator } from '../features/sleep/data/expo-sleep-id-generator';
+import { SqliteSleepRepository } from '../features/sleep/data/sqlite-sleep-repository';
 
 import { createAppRuntime, type AppRuntime } from './app-runtime';
 
@@ -18,8 +20,10 @@ export function createProductionAppRuntime(): AppRuntime {
     createFeedingRepository: (database) => new SqliteFeedingRepository(database),
     createBreastfeedingTimerRepository: (database) =>
       new SqliteBreastfeedingTimerRepository(database),
+    createSleepRepository: (database) => new SqliteSleepRepository(database),
     childIdGenerator: new ExpoChildIdGenerator(),
     feedingIdGenerator: new ExpoFeedingIdGenerator(),
+    sleepIdGenerator: new ExpoSleepIdGenerator(),
     getCurrentCalendarDate: getCurrentLocalCalendarDate,
     getCurrentEpochMs: Date.now,
   });

@@ -1,5 +1,5 @@
-import { CompletedFeedingScreen } from '@/features/feeding/presentation/completed-feeding-screen';
+import { LogHubScreen } from '@/features/logging/presentation/log-hub-screen';
 
 export default function LogScreen() {
-  return <CompletedFeedingScreen />;
+  return <LogHubScreen />;
 }

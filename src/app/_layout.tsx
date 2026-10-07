@@ -38,7 +38,9 @@ function RootStack({ bootstrapStatus }: RootStackProps) {
     <Stack>
       <Stack.Protected guard={bootstrapStatus === 'ready'}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="feeding" />
         <Stack.Screen name="feeding-history" />
+        <Stack.Screen name="sleep" />
       </Stack.Protected>
 
       <Stack.Protected guard={bootstrapStatus === 'onboarding-required'}>

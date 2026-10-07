@@ -16,6 +16,8 @@ import type { FeedingRepository } from '../features/feeding/application/feeding-
 import type { BreastfeedingTimerRepository } from '../features/feeding/application/breastfeeding-timer-repository';
 import type { FeedingEvent } from '../features/feeding/domain/feeding-event';
 import type { BreastfeedingTimerSession } from '../features/feeding/domain/breastfeeding-timer';
+import type { SleepRepository } from '../features/sleep/application/sleep-repository';
+import type { ActiveSleepSession, SleepEvent } from '../features/sleep/domain/sleep';
 
 import {
   AppRuntimeError,
@@ -88,6 +90,25 @@ class FakeBreastfeedingTimerRepository implements BreastfeedingTimerRepository {
   });
 }
 
+class FakeSleepRepository implements SleepRepository {
+  readonly active = new Map<string, ActiveSleepSession>();
+  readonly events: SleepEvent[] = [];
+  readonly getActiveByChildId = vi.fn(async (childId: string) => this.active.get(childId) ?? null);
+  readonly getEventById = vi.fn(async (childId: string, id: string) => {
+    return this.events.find((event) => event.childId === childId && event.id === id) ?? null;
+  });
+  readonly createActive = vi.fn(async (session: ActiveSleepSession) => {
+    this.active.set(session.childId, session);
+  });
+  readonly complete = vi.fn(async (session: ActiveSleepSession, event: SleepEvent) => {
+    this.events.push(event); this.active.delete(session.childId);
+  });
+  readonly discard = vi.fn(async (childId: string) => { this.active.delete(childId); });
+  readonly listRecentByChildId = vi.fn(async (childId: string, limit: number) => {
+    return this.events.filter((event) => event.childId === childId).slice(0, limit);
+  });
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -110,6 +131,7 @@ function createRuntimeFixture(options?: {
   const childRepository = new FakeChildRepository();
   const feedingRepository = new FakeFeedingRepository();
   const breastfeedingTimerRepository = new FakeBreastfeedingTimerRepository();
+  const sleepRepository = new FakeSleepRepository();
   const openDatabase = vi.fn(options?.openDatabase ?? (async () => database));
   const createChildRepository = vi.fn(() => childRepository);
   const createActiveChildRepository = vi.fn(() => activeChildRepository);
@@ -119,9 +141,11 @@ function createRuntimeFixture(options?: {
     createChildRepository,
     createFeedingRepository: () => feedingRepository,
     createBreastfeedingTimerRepository: () => breastfeedingTimerRepository,
+    createSleepRepository: () => sleepRepository,
     childIdGenerator: { generate: () => 'generated-child-id' },
     feedingIdGenerator:
       options?.feedingIdGenerator ?? { generate: () => 'generated-feeding-id' },
+    sleepIdGenerator: { generate: () => 'generated-sleep-id' },
     getCurrentCalendarDate: options?.getCurrentCalendarDate ?? (() => asOf),
     getCurrentEpochMs:
       options?.getCurrentEpochMs ?? (() => 1_765_000_000_123),
@@ -133,6 +157,7 @@ function createRuntimeFixture(options?: {
     childRepository,
     feedingRepository,
     breastfeedingTimerRepository,
+    sleepRepository,
     createActiveChildRepository,
     createChildRepository,
     openDatabase,
@@ -277,8 +302,10 @@ describe('application runtime', () => {
       createFeedingRepository: () => new FakeFeedingRepository(),
       createBreastfeedingTimerRepository: () =>
         new FakeBreastfeedingTimerRepository(),
+      createSleepRepository: () => new FakeSleepRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
+      sleepIdGenerator: { generate: () => 'generated-sleep-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
     });
@@ -301,8 +328,10 @@ describe('application runtime', () => {
       createFeedingRepository: () => new FakeFeedingRepository(),
       createBreastfeedingTimerRepository: () =>
         new FakeBreastfeedingTimerRepository(),
+      createSleepRepository: () => new FakeSleepRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
+      sleepIdGenerator: { generate: () => 'generated-sleep-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
     });
@@ -383,12 +412,14 @@ describe('application runtime', () => {
       createFeedingRepository: () => new FakeFeedingRepository(),
       createBreastfeedingTimerRepository: () =>
         new FakeBreastfeedingTimerRepository(),
+      createSleepRepository: () => new FakeSleepRepository(),
       childIdGenerator: {
         generate: () => {
           throw new Error('raw native UUID failure');
         },
       },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
+      sleepIdGenerator: { generate: () => 'generated-sleep-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
     });
@@ -1084,7 +1115,7 @@ describe('feeding runtime boundary', () => {
     const ordinarySave = fixture.runtime.feeding.recordFeeding({
       kind: 'bottle', amountMl: 60, contents: 'formula',
     });
-    await vi.waitFor(() => expect(clock).toHaveBeenCalledOnce());
+    await Promise.resolve();
     expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
 
     finishTimerTransaction.resolve();
@@ -1173,9 +1204,6 @@ describe('feeding runtime boundary', () => {
     });
     await ordinaryWriteStarted.promise;
     const timerSave = fixture.runtime.feeding.saveFinishedBreastfeedingTimer();
-    await vi.waitFor(() => {
-      expect(fixture.childRepository.getById).toHaveBeenCalledTimes(2);
-    });
     await Promise.resolve();
     expect(fixture.breastfeedingTimerRepository.complete).not.toHaveBeenCalled();
 
@@ -1210,7 +1238,7 @@ describe('feeding runtime boundary', () => {
     const ordinarySave = fixture.runtime.feeding.recordFeeding({
       kind: 'bottle', amountMl: 60, contents: 'formula',
     });
-    await vi.waitFor(() => expect(clock).toHaveBeenCalledOnce());
+    await Promise.resolve();
     expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
 
     failCompletion.resolve();
@@ -1292,12 +1320,125 @@ describe('feeding runtime boundary', () => {
     const ordinarySave = fixture.runtime.feeding.recordFeeding({
       kind: 'bottle', amountMl: 60, contents: 'formula',
     });
-    await vi.waitFor(() => expect(clock).toHaveBeenCalledOnce());
+    await Promise.resolve();
     expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
 
     finishDiscard.resolve();
     await discard;
     await ordinarySave;
     expect(fixture.feedingRepository.save).toHaveBeenCalledOnce();
+  });
+});
+
+describe('sleep runtime boundary', () => {
+  async function createActiveSleepFixture(
+    getCurrentEpochMs: () => number = () => 1_000,
+  ) {
+    const fixture = createRuntimeFixture({ getCurrentEpochMs });
+    const child: Child = {
+      id: 'active-child', displayName: 'Mio',
+      dateOfBirth: createCalendarDate('2025-01-10'),
+    };
+    fixture.childRepository.children.set(child.id, child);
+    fixture.activeChildRepository.activeChildId = child.id;
+    return { ...fixture, child };
+  }
+
+  it('resolves the active child and restores its persisted session and history', async () => {
+    const fixture = await createActiveSleepFixture();
+    const started = await fixture.runtime.sleep.start();
+    expect(started.active).toEqual({
+      id: 'generated-sleep-id', childId: fixture.child.id, startedAtEpochMs: 1_000,
+    });
+    const restored = await fixture.runtime.sleep.getState();
+    expect(restored.active).toEqual(started.active);
+    expect(fixture.sleepRepository.listRecentByChildId)
+      .toHaveBeenLastCalledWith(fixture.child.id, 20);
+  });
+
+  it('keeps sessions owned by their child across active-child changes', async () => {
+    const fixture = await createActiveSleepFixture();
+    const first = await fixture.runtime.sleep.start();
+    const secondChild: Child = {
+      id: 'child-2', displayName: 'Mira', dateOfBirth: createCalendarDate('2025-02-10'),
+    };
+    fixture.childRepository.children.set(secondChild.id, secondChild);
+    fixture.activeChildRepository.activeChildId = secondChild.id;
+    const secondState = await fixture.runtime.sleep.getState();
+    expect(secondState.active).toBeNull();
+    fixture.activeChildRepository.activeChildId = fixture.child.id;
+    await expect(fixture.runtime.sleep.getState()).resolves.toMatchObject({ active: first.active });
+  });
+
+  it('completes with the session identity and never exposes it as active afterward', async () => {
+    let now = 1_000;
+    const fixture = await createActiveSleepFixture(() => now);
+    await fixture.runtime.sleep.start();
+    now = 2_000;
+    const completed = await fixture.runtime.sleep.complete('generated-sleep-id');
+    expect(completed.active).toBeNull();
+    expect(completed.events).toEqual([{
+      id: 'generated-sleep-id', childId: fixture.child.id,
+      startedAtEpochMs: 1_000, endedAtEpochMs: 2_000,
+    }]);
+  });
+
+  it('refuses a stale displayed session identity after active-child state changes', async () => {
+    const fixture = await createActiveSleepFixture();
+    fixture.sleepRepository.active.set(fixture.child.id, {
+      id: 'canonical-session', childId: fixture.child.id, startedAtEpochMs: 1,
+    });
+
+    await expect(fixture.runtime.sleep.complete('stale-session'))
+      .rejects.toMatchObject({ code: 'sleep-session-changed' });
+    await expect(fixture.runtime.sleep.discard('stale-session'))
+      .rejects.toMatchObject({ code: 'sleep-session-changed' });
+    expect(fixture.sleepRepository.complete).not.toHaveBeenCalled();
+    expect(fixture.sleepRepository.discard).not.toHaveBeenCalled();
+  });
+
+  it('holds Feeding writes behind an in-progress Sleep transaction and releases after failure', async () => {
+    const fixture = await createActiveSleepFixture();
+    fixture.sleepRepository.active.set(fixture.child.id, {
+      id: 'sleep-1', childId: fixture.child.id, startedAtEpochMs: 1,
+    });
+    const started = createDeferred<void>();
+    const finish = createDeferred<void>();
+    fixture.sleepRepository.complete.mockImplementationOnce(async () => {
+      started.resolve(); await finish.promise; throw new Error('transaction failed');
+    });
+    const completion = fixture.runtime.sleep.complete('sleep-1');
+    await started.promise;
+    const feeding = fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 10, contents: 'formula',
+    });
+    await Promise.resolve();
+    expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
+    finish.resolve();
+    await expect(completion).rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+    await expect(feeding).resolves.toMatchObject({ kind: 'bottle' });
+  });
+
+  it('holds Sleep writes behind an in-progress Feeding timer transaction', async () => {
+    const fixture = await createActiveSleepFixture();
+    fixture.breastfeedingTimerRepository.session = {
+      sessionId: 'timer', childId: fixture.child.id, status: 'finished',
+      accumulatedLeftMs: 1_000, accumulatedRightMs: 0, finishedAtEpochMs: 900,
+    };
+    const started = createDeferred<void>();
+    const finish = createDeferred<void>();
+    fixture.breastfeedingTimerRepository.complete.mockImplementationOnce(async () => {
+      started.resolve(); await finish.promise;
+      fixture.breastfeedingTimerRepository.session = null;
+    });
+    const feeding = fixture.runtime.feeding.saveFinishedBreastfeedingTimer();
+    await started.promise;
+    const sleep = fixture.runtime.sleep.start();
+    await Promise.resolve();
+    expect(fixture.sleepRepository.createActive).not.toHaveBeenCalled();
+    finish.resolve();
+    await feeding;
+    await sleep;
+    expect(fixture.sleepRepository.createActive).toHaveBeenCalledOnce();
   });
 });

@@ -45,6 +45,20 @@ import type {
   BreastSide,
   BreastfeedingTimerSession,
 } from '../features/feeding/domain/breastfeeding-timer';
+import type { SleepIdGenerator } from '../features/sleep/application/sleep-id-generator';
+import type { SleepRepository } from '../features/sleep/application/sleep-repository';
+import {
+  completeSleep as completeSleepUseCase,
+  discardSleep as discardSleepUseCase,
+  listRecentSleep as listRecentSleepUseCase,
+  SleepApplicationError,
+  startSleep as startSleepUseCase,
+} from '../features/sleep/application/sleep';
+import {
+  activeSleepElapsedMs,
+  type ActiveSleepSession,
+  type SleepEvent,
+} from '../features/sleep/domain/sleep';
 
 export type ChildrenRuntime = Readonly<{
   createChild(request: CreateChildRequest): Promise<Child>;
@@ -69,6 +83,21 @@ export type FeedingRuntime = Readonly<{
   saveFinishedBreastfeedingTimer(): Promise<FeedingEvent>;
 }>;
 
+export type SleepRuntimeState = Readonly<{
+  childId: string;
+  active: ActiveSleepSession | null;
+  events: readonly SleepEvent[];
+  nowEpochMs: number;
+  clockMovedBackward: boolean;
+}>;
+
+export type SleepRuntime = Readonly<{
+  getState(): Promise<SleepRuntimeState>;
+  start(): Promise<SleepRuntimeState>;
+  complete(expectedSessionId: string): Promise<SleepRuntimeState>;
+  discard(expectedSessionId: string): Promise<SleepRuntimeState>;
+}>;
+
 export type FeedingHistoryRuntimeResult = Readonly<{
   childId: string;
   events: readonly FeedingEvent[];
@@ -85,6 +114,7 @@ export type BreastfeedingTimerRuntimeState =
 export type AppRuntime = Readonly<{
   children: ChildrenRuntime;
   feeding: FeedingRuntime;
+  sleep: SleepRuntime;
   close(): Promise<void>;
 }>;
 
@@ -94,6 +124,15 @@ export class FeedingRuntimeError extends Error {
   constructor() {
     super('An active child is required to record feeding.');
     this.name = 'FeedingRuntimeError';
+  }
+}
+
+export class SleepRuntimeError extends Error {
+  readonly code = 'active-child-required' as const;
+
+  constructor() {
+    super('An active child is required to track sleep.');
+    this.name = 'SleepRuntimeError';
   }
 }
 
@@ -120,8 +159,10 @@ export type AppRuntimeDependencies<TDatabase extends RuntimeDatabaseConnection> 
   createChildRepository(database: TDatabase): ChildRepository;
   createFeedingRepository(database: TDatabase): FeedingRepository;
   createBreastfeedingTimerRepository(database: TDatabase): BreastfeedingTimerRepository;
+  createSleepRepository(database: TDatabase): SleepRepository;
   childIdGenerator: ChildIdGenerator;
   feedingIdGenerator: FeedingIdGenerator;
+  sleepIdGenerator: SleepIdGenerator;
   getCurrentCalendarDate(): CalendarDate;
   getCurrentEpochMs(): number;
 }>;
@@ -132,6 +173,7 @@ type InitializedRuntime<TDatabase extends RuntimeDatabaseConnection> = Readonly<
   childRepository: ChildRepository;
   feedingRepository: FeedingRepository;
   breastfeedingTimerRepository: BreastfeedingTimerRepository;
+  sleepRepository: SleepRepository;
 }>;
 
 function sanitizeActiveChildRepository(
@@ -288,6 +330,55 @@ function sanitizeBreastfeedingTimerRepository(
   };
 }
 
+function sanitizeSleepRepository(repository: SleepRepository): SleepRepository {
+  return {
+    async getActiveByChildId(childId) {
+      try { return await repository.getActiveByChildId(childId); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async getEventById(childId, id) {
+      try { return await repository.getEventById(childId, id); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async createActive(session) {
+      try { await repository.createActive(session); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async complete(session, event) {
+      try { await repository.complete(session, event); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async discard(childId, sessionId) {
+      try { await repository.discard(childId, sessionId); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async listRecentByChildId(childId, limit) {
+      try { return await repository.listRecentByChildId(childId, limit); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+  };
+}
+
+function sanitizeSleepIdGenerator(generator: SleepIdGenerator): SleepIdGenerator {
+  return {
+    generate() {
+      try {
+        const id = generator.generate();
+        if (id.trim().length === 0) throw new Error('Invalid generated sleep ID.');
+        return id;
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+  };
+}
+
 export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   dependencies: AppRuntimeDependencies<TDatabase>,
 ): AppRuntime {
@@ -296,12 +387,13 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   let closePromise: Promise<void> | null = null;
   let closed = false;
   let timerBusy = false;
-  let feedingAccessTail: Promise<void> = Promise.resolve();
+  let databaseAccessTail: Promise<void> = Promise.resolve();
   const activeOperations = new Set<Promise<void>>();
   const childIdGenerator = sanitizeChildIdGenerator(dependencies.childIdGenerator);
   const feedingIdGenerator = sanitizeFeedingIdGenerator(
     dependencies.feedingIdGenerator,
   );
+  const sleepIdGenerator = sanitizeSleepIdGenerator(dependencies.sleepIdGenerator);
 
   async function closeDatabase(database: TDatabase): Promise<void> {
     try {
@@ -342,6 +434,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       let activeChildRepository: ActiveChildRepository;
       let feedingRepository: FeedingRepository;
       let breastfeedingTimerRepository: BreastfeedingTimerRepository;
+      let sleepRepository: SleepRepository;
 
       try {
         activeChildRepository = sanitizeActiveChildRepository(
@@ -355,6 +448,9 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         );
         breastfeedingTimerRepository = sanitizeBreastfeedingTimerRepository(
           dependencies.createBreastfeedingTimerRepository(database),
+        );
+        sleepRepository = sanitizeSleepRepository(
+          dependencies.createSleepRepository(database),
         );
       } catch {
         await closeDatabase(database);
@@ -372,6 +468,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         childRepository,
         feedingRepository,
         breastfeedingTimerRepository,
+        sleepRepository,
       };
       return initializedRuntime;
     })();
@@ -408,7 +505,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     })();
   }
 
-  function readTimerClock(): number {
+  function readEpochClock(): number {
     try {
       const value = dependencies.getCurrentEpochMs();
       if (!Number.isSafeInteger(value) || value < 0) {
@@ -421,7 +518,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   }
 
   function timerDependencies(repository: BreastfeedingTimerRepository) {
-    return { repository, clock: { now: readTimerClock } } as const;
+    return { repository, clock: { now: readEpochClock } } as const;
   }
 
   function runTimerOperation<TResult>(
@@ -436,12 +533,12 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     });
   }
 
-  function runSerializedFeedingAccess<TResult>(
+  function runSerializedDatabaseAccess<TResult>(
     operation: () => Promise<TResult>,
   ): Promise<TResult> {
     let release!: () => void;
-    const previous = feedingAccessTail;
-    feedingAccessTail = new Promise<void>((resolve) => {
+    const previous = databaseAccessTail;
+    databaseAccessTail = new Promise<void>((resolve) => {
       release = resolve;
     });
 
@@ -454,7 +551,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       activeChildId: string,
     ) => Promise<TResult>,
   ): Promise<TResult> {
-    return runTimerOperation(async () => {
+    return runTimerOperation(() => runSerializedDatabaseAccess(async () => {
       const { activeChildRepository, childRepository, breastfeedingTimerRepository } =
         await initialize();
       const activeChild = await getActiveChildUseCase({
@@ -463,7 +560,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       });
       if (activeChild === null) throw new FeedingRuntimeError();
       return operation(breastfeedingTimerRepository, activeChild.id);
-    });
+    }));
   }
 
   const children: ChildrenRuntime = {
@@ -478,11 +575,9 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
           throw new AppRuntimeError('local-data-unavailable');
         }
 
-        return createChildUseCase(
-          { activeChildRepository, childRepository, childIdGenerator },
-          request,
-          asOf,
-        );
+        return runSerializedDatabaseAccess(() => createChildUseCase(
+          { activeChildRepository, childRepository, childIdGenerator }, request, asOf,
+        ));
       });
     },
 
@@ -490,10 +585,10 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       return runOperation(async () => {
         const { activeChildRepository, childRepository } = await initialize();
 
-        return getChildrenBootstrapStatusUseCase({
+        return runSerializedDatabaseAccess(() => getChildrenBootstrapStatusUseCase({
           activeChildRepository,
           childRepository,
-        });
+        }));
       });
     },
 
@@ -509,7 +604,8 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       return runOperation(async () => {
         const { activeChildRepository, childRepository } = await initialize();
 
-        return getActiveChildUseCase({ activeChildRepository, childRepository });
+        return runSerializedDatabaseAccess(() =>
+          getActiveChildUseCase({ activeChildRepository, childRepository }));
       });
     },
 
@@ -517,10 +613,10 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       return runOperation(async () => {
         const { activeChildRepository, childRepository } = await initialize();
         try {
-          return await getActiveChildSummaryUseCase(
+          return await runSerializedDatabaseAccess(() => getActiveChildSummaryUseCase(
             { activeChildRepository, childRepository },
             dependencies.getCurrentCalendarDate(),
-          );
+          ));
         } catch {
           // Includes an invalid device clock or unexpected domain/data failures.
           throw new AppRuntimeError('local-data-unavailable');
@@ -540,10 +636,10 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       return runOperation(async () => {
         const { activeChildRepository, childRepository } = await initialize();
 
-        return setActiveChildUseCase(
+        return runSerializedDatabaseAccess(() => setActiveChildUseCase(
           { activeChildRepository, childRepository },
           id,
-        );
+        ));
       });
     },
   };
@@ -556,33 +652,20 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
           childRepository,
           feedingRepository,
         } = await initialize();
-        const activeChild = await getActiveChildUseCase({
-          activeChildRepository,
-          childRepository,
-        });
-
-        if (activeChild === null) {
-          throw new FeedingRuntimeError();
-        }
-
-        let occurredAtEpochMs: number;
-        try {
-          occurredAtEpochMs = dependencies.getCurrentEpochMs();
-          if (!Number.isSafeInteger(occurredAtEpochMs) || occurredAtEpochMs < 0) {
-            throw new Error('Invalid runtime clock value.');
-          }
-        } catch {
-          throw new AppRuntimeError('local-data-unavailable');
-        }
-
-        return runSerializedFeedingAccess(() =>
+        return runSerializedDatabaseAccess(async () => {
+          const activeChild = await getActiveChildUseCase({
+            activeChildRepository, childRepository,
+          });
+          if (activeChild === null) throw new FeedingRuntimeError();
+          const occurredAtEpochMs = readEpochClock();
+          return (
           recordFeedingUseCase(
             { feedingIdGenerator, feedingRepository },
             activeChild.id,
             occurredAtEpochMs,
             details,
-          ),
-        );
+          ));
+        });
       });
     },
 
@@ -593,23 +676,19 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
           childRepository,
           feedingRepository,
         } = await initialize();
-        const activeChild = await getActiveChildUseCase({
-          activeChildRepository,
-          childRepository,
+        return runSerializedDatabaseAccess(async () => {
+          const activeChild = await getActiveChildUseCase({
+            activeChildRepository, childRepository,
+          });
+          if (activeChild === null) throw new FeedingRuntimeError();
+          const events = await listRecentFeedingsUseCase(feedingRepository, activeChild.id);
+          return { childId: activeChild.id, events };
         });
-
-        if (activeChild === null) {
-          throw new FeedingRuntimeError();
-        }
-
-        const events = await runSerializedFeedingAccess(() =>
-          listRecentFeedingsUseCase(feedingRepository, activeChild.id));
-        return { childId: activeChild.id, events };
       });
     },
 
     getBreastfeedingTimer() {
-      return runTimerOperation(async () => {
+      return runTimerOperation(() => runSerializedDatabaseAccess(async () => {
         const { activeChildRepository, childRepository, breastfeedingTimerRepository } =
           await initialize();
         const session = await breastfeedingTimerRepository.get();
@@ -634,7 +713,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
           return { status: 'ready', ...result };
         }
         return { status: 'ready', session, clockMovedBackward: false };
-      });
+      }));
     },
 
     startBreastfeedingTimer(side) {
@@ -676,25 +755,94 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     },
 
     discardBreastfeedingTimer() {
-      return timerMutation((repository, childId) =>
-        runSerializedFeedingAccess(async () => {
-          await discardTimerUseCase(repository, childId);
-          return { status: 'idle' };
-        }));
+      return timerMutation(async (repository, childId) => {
+        await discardTimerUseCase(repository, childId);
+        return { status: 'idle' };
+      });
     },
 
     saveFinishedBreastfeedingTimer() {
-      return timerMutation((repository, childId) =>
-        runSerializedFeedingAccess(() => completeTimerUseCase(
+      return timerMutation((repository, childId) => completeTimerUseCase(
           { repository, idGenerator: feedingIdGenerator },
           childId,
-        )));
+        ));
+    },
+  };
+
+  function runSleepOperation<TResult>(operation: () => Promise<TResult>): Promise<TResult> {
+    return runOperation(() => runSerializedDatabaseAccess(operation));
+  }
+
+  async function sleepState(
+    repositories: Pick<InitializedRuntime<TDatabase>,
+      'activeChildRepository' | 'childRepository' | 'sleepRepository'>,
+  ): Promise<SleepRuntimeState> {
+    const activeChild = await getActiveChildUseCase(repositories);
+    if (activeChild === null) throw new SleepRuntimeError();
+    const nowEpochMs = readEpochClock();
+    const [active, events] = await Promise.all([
+      repositories.sleepRepository.getActiveByChildId(activeChild.id),
+      listRecentSleepUseCase(repositories.sleepRepository, activeChild.id),
+    ]);
+    return {
+      childId: activeChild.id,
+      active,
+      events,
+      nowEpochMs,
+      clockMovedBackward: active === null
+        ? false
+        : activeSleepElapsedMs(active, nowEpochMs).clockMovedBackward,
+    };
+  }
+
+  const sleep: SleepRuntime = {
+    getState() {
+      return runSleepOperation(async () => sleepState(await initialize()));
+    },
+    start() {
+      return runSleepOperation(async () => {
+        const repositories = await initialize();
+        const activeChild = await getActiveChildUseCase(repositories);
+        if (activeChild === null) throw new SleepRuntimeError();
+        await startSleepUseCase({
+          repository: repositories.sleepRepository,
+          idGenerator: sleepIdGenerator,
+        }, activeChild.id, readEpochClock());
+        return sleepState(repositories);
+      });
+    },
+    complete(expectedSessionId) {
+      return runSleepOperation(async () => {
+        const repositories = await initialize();
+        const activeChild = await getActiveChildUseCase(repositories);
+        if (activeChild === null) throw new SleepRuntimeError();
+        const session = await repositories.sleepRepository.getActiveByChildId(activeChild.id);
+        if (session === null || session.id !== expectedSessionId) {
+          throw new SleepApplicationError('sleep-session-changed');
+        }
+        await completeSleepUseCase(repositories.sleepRepository, session, readEpochClock());
+        return sleepState(repositories);
+      });
+    },
+    discard(expectedSessionId) {
+      return runSleepOperation(async () => {
+        const repositories = await initialize();
+        const activeChild = await getActiveChildUseCase(repositories);
+        if (activeChild === null) throw new SleepRuntimeError();
+        const session = await repositories.sleepRepository.getActiveByChildId(activeChild.id);
+        if (session === null || session.id !== expectedSessionId) {
+          throw new SleepApplicationError('sleep-session-changed');
+        }
+        await discardSleepUseCase(repositories.sleepRepository, session);
+        return sleepState(repositories);
+      });
     },
   };
 
   return {
     children,
     feeding,
+    sleep,
     close() {
       if (closePromise !== null) {
         return closePromise;
