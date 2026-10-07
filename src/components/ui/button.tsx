@@ -40,7 +40,7 @@ export function Button({
       ]}>
       <AppText
         variant="label"
-        style={isPrimary ? styles.primaryLabel : styles.secondaryLabel}>
+        style={[styles.label, isPrimary ? styles.primaryLabel : styles.secondaryLabel]}>
         {children}
       </AppText>
     </Pressable>
@@ -72,6 +72,10 @@ const styles = StyleSheet.create({
   },
   disabled: {
     opacity: 0.5,
+  },
+  label: {
+    alignSelf: 'stretch',
+    textAlign: 'center',
   },
   primaryLabel: {
     color: lightColors.actionPrimaryText,

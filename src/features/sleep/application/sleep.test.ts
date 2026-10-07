@@ -83,6 +83,39 @@ describe('sleep application', () => {
     await expect(discardSleep(repository, session)).resolves.toBeUndefined();
   });
 
+  it('does not start the event read when the first reconciliation read rejects', async () => {
+    const { repository } = fakeRepository();
+    const session = { id: 'sleep-1', childId: 'child-1', startedAtEpochMs: 10 };
+    const readError = new Error('reconciliation unavailable');
+    repository.complete = vi.fn(async () => { throw new Error('uncertain write'); });
+    repository.getActiveByChildId = vi.fn(async () => { throw readError; });
+    const eventRead = vi.spyOn(repository, 'getEventById');
+    await expect(completeSleep(repository, session, 20)).rejects.toBe(readError);
+    expect(eventRead).not.toHaveBeenCalled();
+    expect(repository.complete).toHaveBeenCalledOnce();
+  });
+
+  it.each(['committed', 'not-committed', 'unreadable'] as const)(
+    'preserves the %s completion outcome without repeating the write', async outcome => {
+      const { repository } = fakeRepository();
+      const session = { id: 'sleep-1', childId: 'child-1', startedAtEpochMs: 10 };
+      const event = { ...session, endedAtEpochMs: 20 };
+      const writeError = new Error('uncertain write');
+      const readError = new Error('unreadable result');
+      repository.complete = vi.fn(async () => { throw writeError; });
+      repository.getActiveByChildId = vi.fn(async () => outcome === 'not-committed' ? session : null);
+      repository.getEventById = vi.fn(async () => {
+        if (outcome === 'unreadable') throw readError;
+        return outcome === 'committed' ? event : null;
+      });
+      const completion = completeSleep(repository, session, 20);
+      if (outcome === 'committed') await expect(completion).resolves.toEqual(event);
+      else await expect(completion).rejects.toBe(outcome === 'unreadable' ? readError : writeError);
+      expect(repository.complete).toHaveBeenCalledOnce();
+      expect(repository.getEventById).toHaveBeenCalledWith(session.childId, session.id);
+    },
+  );
+
   it('uses the product-owned recent limit', async () => {
     const { repository } = fakeRepository();
     const list = vi.spyOn(repository, 'listRecentByChildId');

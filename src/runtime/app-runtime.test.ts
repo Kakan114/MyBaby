@@ -1,3 +1,13 @@
+import { getLocalDayContext } from '../features/today/data/local-day-context';
+import type { TodayReadRepositories } from '../features/today/application/get-today-summary';
+
+function emptyTodayReaders(): TodayReadRepositories {
+  return {
+    feeding: { getCompletedSummary: async () => ({ dayCount: 0, latestCompletedAtEpochMs: null }) },
+    diapers: { getEventSummary: async () => ({ dayCount: 0, latestOccurredAtEpochMs: null }) },
+    sleep: { listCompletedOverlapping: async () => [], getActiveByChildId: async () => null },
+  };
+}
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActiveChildRepository } from '../features/children/application/active-child-repository';
@@ -167,6 +177,8 @@ function createRuntimeFixture(options?: {
   const createChildRepository = vi.fn(() => childRepository);
   const createActiveChildRepository = vi.fn(() => activeChildRepository);
   const runtime = createAppRuntime({
+    getLocalDayContext,
+    createTodayReadRepositories: emptyTodayReaders,
     openDatabase,
     createActiveChildRepository,
     createChildRepository,
@@ -202,6 +214,37 @@ function createRuntimeFixture(options?: {
 const asOf = createCalendarDate('2025-06-15');
 
 describe('application runtime', () => {
+  it('allows independent replacement reads throughout outgoing close', async () => {
+    const outgoing = createRuntimeFixture();
+    const replacement = createRuntimeFixture();
+    await outgoing.runtime.children.getChildById('missing');
+    const started = createDeferred<void>();
+    const finished = createDeferred<void>();
+    outgoing.database.closeAsync.mockImplementationOnce(async () => {
+      started.resolve(); await finished.promise;
+    });
+    const closing = outgoing.runtime.close();
+    await started.promise;
+    await expect(replacement.runtime.children.getChildById('missing')).resolves.toBeNull();
+    expect(replacement.database).not.toBe(outgoing.database);
+    expect(replacement.database.closeAsync).not.toHaveBeenCalled();
+    finished.resolve(); await closing;
+    await expect(replacement.runtime.children.getChildById('missing')).resolves.toBeNull();
+    expect(outgoing.database.closeAsync).toHaveBeenCalledOnce();
+    await replacement.runtime.close();
+    expect(replacement.database.closeAsync).toHaveBeenCalledOnce();
+  });
+
+  it.each(['database is busy', 'database is locked'])('sanitizes a %s read without retry', async message => {
+    const fixture = createRuntimeFixture();
+    fixture.childRepository.getById.mockRejectedValueOnce(new Error(message));
+    await expect(fixture.runtime.children.getChildById('missing'))
+      .rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+    expect(fixture.childRepository.getById).toHaveBeenCalledOnce();
+    await expect(fixture.runtime.children.getChildById('missing')).resolves.toBeNull();
+    await fixture.runtime.close();
+  });
+
   it('does not initialize local data when the runtime is created', () => {
     const fixture = createRuntimeFixture();
 
@@ -330,6 +373,8 @@ describe('application runtime', () => {
       .mockResolvedValueOnce(database);
     const childRepository = new FakeChildRepository();
     const runtime = createAppRuntime({
+    getLocalDayContext,
+    createTodayReadRepositories: emptyTodayReaders,
       openDatabase,
       createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => childRepository,
@@ -356,6 +401,8 @@ describe('application runtime', () => {
   it('closes the connection when repository construction fails', async () => {
     const database = new FakeDatabase();
     const runtime = createAppRuntime({
+    getLocalDayContext,
+    createTodayReadRepositories: emptyTodayReaders,
       openDatabase: async () => database,
       createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => {
@@ -444,6 +491,8 @@ describe('application runtime', () => {
   it('sanitizes child ID generator infrastructure failures', async () => {
     const database = new FakeDatabase();
     const runtime = createAppRuntime({
+    getLocalDayContext,
+    createTodayReadRepositories: emptyTodayReaders,
       openDatabase: async () => database,
       createActiveChildRepository: () => new FakeActiveChildRepository(),
       createChildRepository: () => new FakeChildRepository(),
@@ -1384,6 +1433,81 @@ describe('sleep runtime boundary', () => {
     return { ...fixture, child };
   }
 
+  it('does not start history after a failed active read and releases the queue', async () => {
+    const fixture = await createActiveSleepFixture();
+    const started = createDeferred<void>();
+    const active = createDeferred<ActiveSleepSession | null>();
+    fixture.sleepRepository.getActiveByChildId.mockImplementationOnce(() => {
+      started.resolve(); return active.promise;
+    });
+    const state = fixture.runtime.sleep.getState();
+    const failure = expect(state).rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+    await started.promise;
+    const feeding = fixture.runtime.feeding.getRecentFeedings();
+    await Promise.resolve();
+    expect(fixture.sleepRepository.listRecentByChildId).not.toHaveBeenCalled();
+    expect(fixture.feedingRepository.listRecentByChildId).not.toHaveBeenCalled();
+    active.reject(new Error('read failed'));
+    await failure;
+    await feeding;
+    expect(fixture.sleepRepository.listRecentByChildId).not.toHaveBeenCalled();
+    expect(fixture.feedingRepository.listRecentByChildId).toHaveBeenCalledOnce();
+    await fixture.runtime.close();
+  });
+
+  it('drains a pending history read before closing once, even when the read fails', async () => {
+    const fixture = await createActiveSleepFixture();
+    const started = createDeferred<void>();
+    const history = createDeferred<SleepEvent[]>();
+    fixture.sleepRepository.listRecentByChildId.mockImplementationOnce(() => {
+      started.resolve(); return history.promise;
+    });
+    const state = fixture.runtime.sleep.getState();
+    const failure = expect(state).rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+    await started.promise;
+    const feeding = fixture.runtime.feeding.getRecentFeedings();
+    // This operation is admitted before shutdown but cannot acquire the queue yet.
+    const feedingResult = feeding.catch(error => error);
+    const closing = fixture.runtime.close();
+    const closingAgain = fixture.runtime.close();
+    await expect(fixture.runtime.sleep.getState()).rejects.toMatchObject({ code: 'runtime-closed' });
+    await Promise.resolve();
+    expect(fixture.feedingRepository.listRecentByChildId).not.toHaveBeenCalled();
+    expect(fixture.database.closeAsync).not.toHaveBeenCalled();
+    history.reject(new Error('history unavailable'));
+    await failure;
+    await feedingResult;
+    await closing;
+    await closingAgain;
+    expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
+  });
+
+  it('holds the queue and shutdown through a pending completion reconciliation read', async () => {
+    const fixture = await createActiveSleepFixture();
+    const session = { id: 'sleep-1', childId: fixture.child.id, startedAtEpochMs: 1 };
+    fixture.sleepRepository.active.set(fixture.child.id, session);
+    fixture.sleepRepository.complete.mockRejectedValueOnce(new Error('uncertain write'));
+    const started = createDeferred<void>();
+    const completed = createDeferred<SleepEvent | null>();
+    fixture.sleepRepository.getEventById.mockImplementationOnce(() => {
+      started.resolve(); return completed.promise;
+    });
+    const completion = fixture.runtime.sleep.complete(session.id);
+    const failure = expect(completion).rejects.toEqual(new AppRuntimeError('local-data-unavailable'));
+    await started.promise;
+    const feeding = fixture.runtime.feeding.getRecentFeedings().catch(error => error);
+    const closing = fixture.runtime.close();
+    await Promise.resolve();
+    expect(fixture.database.closeAsync).not.toHaveBeenCalled();
+    expect(fixture.feedingRepository.listRecentByChildId).not.toHaveBeenCalled();
+    completed.reject(new Error('reconciliation unavailable'));
+    await failure;
+    await feeding;
+    await closing;
+    expect(fixture.sleepRepository.complete).toHaveBeenCalledOnce();
+    expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
+  });
+
   it('resolves the active child and restores its persisted session and history', async () => {
     const fixture = await createActiveSleepFixture();
     const started = await fixture.runtime.sleep.start();
@@ -1651,5 +1775,49 @@ describe('sleep runtime boundary', () => {
     finish.resolve();
     await expect(diaper).rejects.toMatchObject({ code: 'diaper-not-saved' });
     await expect(feeding).resolves.toMatchObject({ kind: 'bottle' });
+  });
+});
+
+describe('Today child-selection notification boundary', () => {
+  it('announces a switch before initialization and completes with no subscribers after unsubscribe', async () => {
+    const pending = createDeferred<FakeDatabase>();
+    const fixture = createRuntimeFixture({ openDatabase: () => pending.promise });
+    const listener = vi.fn();
+    const unsubscribe = fixture.runtime.today.subscribeSelectionChange!(listener);
+    fixture.childRepository.children.set('child', {
+      id: 'child', displayName: 'Mio', dateOfBirth: createCalendarDate('2025-01-01'),
+    });
+    const operation = fixture.runtime.children.setActiveChild('child');
+    expect(listener).toHaveBeenLastCalledWith(true);
+    pending.resolve(fixture.database);
+    await operation;
+    expect(listener.mock.calls).toEqual([[true], [false]]);
+    unsubscribe();
+    await fixture.runtime.children.setActiveChild('child');
+    expect(listener).toHaveBeenCalledTimes(2);
+    await fixture.runtime.close();
+  });
+  it('always clears switching on failed selection and isolates observer exceptions', async () => {
+    const fixture = createRuntimeFixture();
+    const listener = vi.fn();
+    fixture.runtime.today.subscribeSelectionChange!(() => { throw new Error('observer'); });
+    fixture.runtime.today.subscribeSelectionChange!(listener);
+    await expect(fixture.runtime.children.setActiveChild('missing')).rejects.toThrow();
+    expect(listener.mock.calls).toEqual([[true], [false]]);
+    await fixture.runtime.close();
+  });
+  it('a new subscriber can see an already-pending selection', async () => {
+    const pending = createDeferred<FakeDatabase>();
+    const fixture = createRuntimeFixture({ openDatabase: () => pending.promise });
+    fixture.childRepository.children.set('child', {
+      id: 'child', displayName: 'Mio', dateOfBirth: createCalendarDate('2025-01-01'),
+    });
+    const operation = fixture.runtime.children.setActiveChild('child');
+    const listener = vi.fn();
+    fixture.runtime.today.subscribeSelectionChange!(listener);
+    expect(listener).toHaveBeenLastCalledWith(true);
+    pending.resolve(fixture.database); await operation;
+    expect(listener).toHaveBeenLastCalledWith(false);
+    await fixture.runtime.close();
   });
 });

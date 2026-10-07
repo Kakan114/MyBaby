@@ -1,3 +1,6 @@
+import { assertEpochRange, type EpochRange } from '../../../utils/epoch-range';
+import { readEventStatistics, type EventStatisticsRow } from '../../../data/local/event-statistics';
+import type { DiaperSummaryReader } from '../application/diaper-summary-reader';
 import type { DiaperRepository } from '../application/diaper-repository';
 import { createDiaperEvent, type DiaperEvent } from '../domain/diaper-event';
 
@@ -46,7 +49,21 @@ function mapRow(row: DiaperRow, expectedChildId: string): DiaperEvent {
   });
 }
 
-export class SqliteDiaperRepository implements DiaperRepository {
+export class SqliteDiaperRepository implements DiaperRepository, DiaperSummaryReader {
+  async getEventSummary(childId: string, day: EpochRange) {
+    assertEpochRange(day);
+    if (childId.trim().length === 0) throw new Error('Invalid child ID.');
+    const sql = `
+      SELECT
+        (SELECT COUNT(*) FROM diaper_events
+          WHERE child_id = ? AND occurred_at_epoch_ms >= ? AND occurred_at_epoch_ms < ?) AS day_count,
+        (SELECT MAX(occurred_at_epoch_ms) FROM diaper_events WHERE child_id = ?) AS latest_epoch_ms;
+    `;
+    const row = await this.database.getFirstAsync<EventStatisticsRow>(sql, [childId, day.startEpochMs, day.endEpochMs, childId]);
+    const result = readEventStatistics(row ?? undefined);
+    return { dayCount: result.dayCount, latestOccurredAtEpochMs: result.latestEpochMs };
+  }
+
   constructor(private readonly database: DiaperDatabase) {}
 
   async save(event: DiaperEvent): Promise<void> {

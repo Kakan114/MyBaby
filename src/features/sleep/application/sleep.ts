@@ -63,10 +63,8 @@ export async function completeSleep(
     await repository.complete(session, event);
     return event;
   } catch (error) {
-    const [active, completed] = await Promise.all([
-      repository.getActiveByChildId(session.childId),
-      repository.getEventById(session.childId, session.id),
-    ]);
+    const active = await repository.getActiveByChildId(session.childId);
+    const completed = await repository.getEventById(session.childId, session.id);
     if (active === null && completed !== null) return completed;
     throw error;
   }

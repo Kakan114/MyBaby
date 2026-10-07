@@ -8,8 +8,11 @@ import {
   useState,
 } from 'react';
 
+import type { TodayRuntime } from '../features/today/runtime/create-today-runtime';
 import type { ChildrenRuntime, DiaperRuntime, FeedingRuntime, SleepRuntime } from './app-runtime';
 import { createProductionAppRuntime } from './create-production-app-runtime';
+
+const TodayRuntimeContext = createContext<TodayRuntime | null>(null);
 
 const ChildrenRuntimeContext = createContext<ChildrenRuntime | null>(null);
 const FeedingRuntimeContext = createContext<FeedingRuntime | null>(null);
@@ -27,15 +30,17 @@ export function AppRuntimeProvider({ children }: PropsWithChildren) {
   );
 
   return (
-    <ChildrenRuntimeContext.Provider value={runtime.children}>
-      <FeedingRuntimeContext.Provider value={runtime.feeding}>
-        <SleepRuntimeContext.Provider value={runtime.sleep}>
-          <DiaperRuntimeContext.Provider value={runtime.diapers}>
-            {children}
-          </DiaperRuntimeContext.Provider>
-        </SleepRuntimeContext.Provider>
-      </FeedingRuntimeContext.Provider>
-    </ChildrenRuntimeContext.Provider>
+    <TodayRuntimeContext.Provider value={runtime.today}>
+      <ChildrenRuntimeContext.Provider value={runtime.children}>
+        <FeedingRuntimeContext.Provider value={runtime.feeding}>
+          <SleepRuntimeContext.Provider value={runtime.sleep}>
+            <DiaperRuntimeContext.Provider value={runtime.diapers}>
+              {children}
+            </DiaperRuntimeContext.Provider>
+          </SleepRuntimeContext.Provider>
+        </FeedingRuntimeContext.Provider>
+      </ChildrenRuntimeContext.Provider>
+    </TodayRuntimeContext.Provider>
   );
 }
 
@@ -72,5 +77,11 @@ export function useChildrenRuntime(): ChildrenRuntime {
     throw new Error('useChildrenRuntime must be used within AppRuntimeProvider.');
   }
 
+  return runtime;
+}
+
+export function useTodayRuntime(): TodayRuntime {
+  const runtime = useContext(TodayRuntimeContext);
+  if (runtime === null) throw new Error('useTodayRuntime must be used within AppRuntimeProvider.');
   return runtime;
 }

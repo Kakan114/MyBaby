@@ -50,7 +50,7 @@ export async function initializeLocalDatabase<TDatabase extends LocalDatabaseCon
 export function openLocalDatabase(): Promise<SQLiteDatabase> {
   return initializeLocalDatabase<SQLiteDatabase>({
     getDatabaseKey: getOrCreateDatabaseKey,
-    openDatabase: () => openDatabaseAsync(LOCAL_DATABASE_NAME),
+    openDatabase: () => openDatabaseAsync(LOCAL_DATABASE_NAME, { useNewConnection: true }),
     migrateDatabase: migrateLocalDatabase,
   });
 }

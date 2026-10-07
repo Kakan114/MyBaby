@@ -1,3 +1,5 @@
+import { assertEpochRange, type EpochRange } from '../../../utils/epoch-range';
+import type { SleepDayReader } from '../application/sleep-day-reader';
 import type { SleepRepository } from '../application/sleep-repository';
 import {
   createActiveSleepSession,
@@ -68,7 +70,17 @@ function mapEvent(row: EventRow, expectedChildId: string): SleepEvent {
   return createSleepEvent({ ...active, endedAtEpochMs: row.ended_at_epoch_ms });
 }
 
-export class SqliteSleepRepository implements SleepRepository {
+export class SqliteSleepRepository implements SleepRepository, SleepDayReader {
+  async listCompletedOverlapping(childId: string, day: EpochRange): Promise<readonly SleepEvent[]> {
+    assertEpochRange(day);
+    if (childId.trim().length === 0) throw new Error('Invalid child ID.');
+    const rows = await this.database.getAllAsync<EventRow>(`
+      SELECT id, child_id, started_at_epoch_ms, ended_at_epoch_ms
+      FROM sleep_events
+      WHERE child_id = ? AND started_at_epoch_ms < ? AND ended_at_epoch_ms > ?;
+    `, [childId, day.endEpochMs, day.startEpochMs]);
+    return rows.map((row) => mapEvent(row, childId));
+  }
   constructor(private readonly database: SleepDatabase) {}
 
   async getActiveByChildId(childId: string): Promise<ActiveSleepSession | null> {

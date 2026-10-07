@@ -1,3 +1,6 @@
+import { assertEpochRange, type EpochRange } from '../../../utils/epoch-range';
+import { readEventStatistics, type EventStatisticsRow } from '../../../data/local/event-statistics';
+import type { FeedingSummaryReader } from '../application/feeding-summary-reader';
 import type { FeedingRepository } from '../application/feeding-repository';
 import {
   amountMlToTenths,
@@ -131,7 +134,21 @@ function mapFeedingRow(row: FeedingRow, requestedChildId: string): FeedingEvent 
   throw new Error('Invalid persisted feeding kind.');
 }
 
-export class SqliteFeedingRepository implements FeedingRepository {
+export class SqliteFeedingRepository implements FeedingRepository, FeedingSummaryReader {
+  async getCompletedSummary(childId: string, day: EpochRange) {
+    assertEpochRange(day);
+    if (childId.trim().length === 0) throw new Error('Invalid child ID.');
+    const sql = `
+      SELECT
+        (SELECT COUNT(*) FROM feeding_events
+          WHERE child_id = ? AND occurred_at_epoch_ms >= ? AND occurred_at_epoch_ms < ?) AS day_count,
+        (SELECT MAX(occurred_at_epoch_ms) FROM feeding_events WHERE child_id = ?) AS latest_epoch_ms;
+    `;
+    const rows = await this.database.getAllAsync(sql, [childId, day.startEpochMs, day.endEpochMs, childId]);
+    const result = readEventStatistics(rows[0] as EventStatisticsRow | undefined);
+    return { dayCount: result.dayCount, latestCompletedAtEpochMs: result.latestEpochMs };
+  }
+
   constructor(private readonly database: FeedingRepositoryDatabase) {}
 
   async listRecentByChildId(

@@ -1,3 +1,4 @@
+import { getLocalDayContext } from '../features/today/data/local-day-context';
 import { openLocalDatabase } from '../data/local/open-local-database';
 import { ExpoChildIdGenerator } from '../features/children/data/expo-child-id-generator';
 import { getCurrentLocalCalendarDate } from '../features/children/data/local-calendar-date';
@@ -30,5 +31,11 @@ export function createProductionAppRuntime(): AppRuntime {
     diaperIdGenerator: new ExpoDiaperIdGenerator(),
     getCurrentCalendarDate: getCurrentLocalCalendarDate,
     getCurrentEpochMs: Date.now,
+    getLocalDayContext,
+    createTodayReadRepositories: (database) => ({
+      feeding: new SqliteFeedingRepository(database),
+      diapers: new SqliteDiaperRepository(database),
+      sleep: new SqliteSleepRepository(database),
+    }),
   });
 }

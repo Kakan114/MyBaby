@@ -1,3 +1,5 @@
+import { assertEpochRange, type EpochRange } from '../../../utils/epoch-range';
+
 export type ActiveSleepSession = Readonly<{
   id: string;
   childId: string;
@@ -70,4 +72,31 @@ export function activeSleepElapsedMs(
     elapsedMs: nowEpochMs - session.startedAtEpochMs,
     clockMovedBackward: false,
   };
+}
+
+/** Measure the union of completed intervals clipped to a half-open calendar-day range. */
+export function completedSleepUnionDurationMs(events: readonly SleepEvent[], range: EpochRange): number {
+  assertEpochRange(range);
+  const intervals = events.map((event) => {
+    const value = createSleepEvent(event);
+    return {
+      start: Math.max(value.startedAtEpochMs, range.startEpochMs),
+      end: Math.min(value.endedAtEpochMs, range.endEpochMs),
+    };
+  }).filter((interval) => interval.end > interval.start)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+
+  let total = 0;
+  let start = 0;
+  let end = 0;
+  for (const interval of intervals) {
+    if (interval.start > end) {
+      total += end - start;
+      start = interval.start;
+      end = interval.end;
+    } else {
+      end = Math.max(end, interval.end);
+    }
+  }
+  return total + end - start;
 }

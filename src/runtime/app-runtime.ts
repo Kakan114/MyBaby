@@ -1,3 +1,6 @@
+import { createTodayRuntime, type TodayRuntime } from '../features/today/runtime/create-today-runtime';
+import type { TodayReadRepositories } from '../features/today/application/get-today-summary';
+import type { LocalDayContext } from '../features/today/application/today-summary';
 import {
   getActiveChildSummary as getActiveChildSummaryUseCase,
   type ActiveChildSummary,
@@ -155,6 +158,7 @@ export type AppRuntime = Readonly<{
   feeding: FeedingRuntime;
   sleep: SleepRuntime;
   diapers: DiaperRuntime;
+  today: TodayRuntime;
   close(): Promise<void>;
 }>;
 
@@ -215,10 +219,13 @@ export type AppRuntimeDependencies<TDatabase extends RuntimeDatabaseConnection> 
   diaperIdGenerator: DiaperIdGenerator;
   getCurrentCalendarDate(): CalendarDate;
   getCurrentEpochMs(): number;
+  getLocalDayContext(nowEpochMs: number): LocalDayContext;
+  createTodayReadRepositories(database: TDatabase): TodayReadRepositories;
 }>;
 
 type InitializedRuntime<TDatabase extends RuntimeDatabaseConnection> = Readonly<{
   database: TDatabase;
+  todayReadRepositories: TodayReadRepositories;
   activeChildRepository: ActiveChildRepository;
   childRepository: ChildRepository;
   feedingRepository: FeedingRepository;
@@ -530,6 +537,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         throw new AppRuntimeError('runtime-closed');
       }
 
+      let todayReadRepositories: TodayReadRepositories;
       let childRepository: ChildRepository;
       let activeChildRepository: ActiveChildRepository;
       let feedingRepository: FeedingRepository;
@@ -538,6 +546,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       let diaperRepository: DiaperRepository;
 
       try {
+        todayReadRepositories = dependencies.createTodayReadRepositories(database);
         activeChildRepository = sanitizeActiveChildRepository(
           dependencies.createActiveChildRepository(database),
         );
@@ -568,6 +577,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
 
       initializedRuntime = {
         database,
+        todayReadRepositories,
         activeChildRepository,
         childRepository,
         feedingRepository,
@@ -668,6 +678,34 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     }));
   }
 
+  const selectionListeners = new Set<(switching: boolean) => void>();
+  let selectionChanges = 0;
+  function notifySelection() {
+    for (const listener of selectionListeners) {
+      // A presentation subscriber must never break a persisted operation.
+      try { listener(selectionChanges > 0); } catch { /* subscriber is isolated */ }
+    }
+  }
+  const today = createTodayRuntime({
+    subscribeSelectionChange(listener) {
+      selectionListeners.add(listener);
+      if (selectionChanges > 0) listener(true);
+      return () => { selectionListeners.delete(listener); };
+    },
+    runOperation,
+    withDatabaseQueue: runSerializedDatabaseAccess,
+    async initialize() {
+      const initialized = await initialize();
+      return {
+        activeChildRepository: initialized.activeChildRepository,
+        childRepository: initialized.childRepository,
+        ...initialized.todayReadRepositories,
+      };
+    },
+    readEpochClock,
+    getLocalDayContext: dependencies.getLocalDayContext,
+    localDataError: () => new AppRuntimeError('local-data-unavailable'),
+  });
   const children: ChildrenRuntime = {
     createChild(request) {
       return runOperation(async () => {
@@ -739,12 +777,18 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
 
     setActiveChild(id) {
       return runOperation(async () => {
-        const { activeChildRepository, childRepository } = await initialize();
-
-        return runSerializedDatabaseAccess(() => setActiveChildUseCase(
-          { activeChildRepository, childRepository },
-          id,
-        ));
+        ++selectionChanges;
+        notifySelection();
+        try {
+          const { activeChildRepository, childRepository } = await initialize();
+          return await runSerializedDatabaseAccess(() => setActiveChildUseCase(
+            { activeChildRepository, childRepository },
+            id,
+          ));
+        } finally {
+          --selectionChanges;
+          notifySelection();
+        }
       });
     },
   };
@@ -885,10 +929,8 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     const activeChild = await getActiveChildUseCase(repositories);
     if (activeChild === null) throw new SleepRuntimeError();
     const nowEpochMs = readEpochClock();
-    const [active, events] = await Promise.all([
-      repositories.sleepRepository.getActiveByChildId(activeChild.id),
-      listRecentSleepUseCase(repositories.sleepRepository, activeChild.id),
-    ]);
+    const active = await repositories.sleepRepository.getActiveByChildId(activeChild.id);
+    const events = await listRecentSleepUseCase(repositories.sleepRepository, activeChild.id);
     return {
       childId: activeChild.id,
       active,
@@ -1046,6 +1088,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   };
 
   return {
+    today,
     children,
     feeding,
     sleep,
