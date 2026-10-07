@@ -89,6 +89,14 @@ export class SqliteSleepRepository implements SleepRepository {
     `, [value.childId, value.id, value.startedAtEpochMs]);
   }
 
+  async saveCompleted(event: SleepEvent): Promise<void> {
+    const value = createSleepEvent(event);
+    await this.database.runAsync(`
+      INSERT INTO sleep_events (id, child_id, started_at_epoch_ms, ended_at_epoch_ms)
+      VALUES (?, ?, ?, ?);
+    `, [value.id, value.childId, value.startedAtEpochMs, value.endedAtEpochMs]);
+  }
+
   async complete(session: ActiveSleepSession, event: SleepEvent): Promise<void> {
     const active = createActiveSleepSession(session);
     const completed = createSleepEvent(event);

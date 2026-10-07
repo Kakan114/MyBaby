@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SleepRepository } from './sleep-repository';
-import { completeSleep, discardSleep, listRecentSleep, startSleep } from './sleep';
+import {
+  completeSleep,
+  discardSleep,
+  listRecentSleep,
+  recordCompletedSleep,
+  startSleep,
+} from './sleep';
 import type { ActiveSleepSession, SleepEvent } from '../domain/sleep';
 
 function fakeRepository() {
@@ -13,6 +19,7 @@ function fakeRepository() {
       const event = events.get(id);
       return event?.childId === childId ? event : null;
     },
+    async saveCompleted(value) { events.set(value.id, value); },
     async createActive(value) { active.set(value.childId, value); },
     async complete(session, event) { events.set(event.id, event); active.delete(session.childId); },
     async discard(childId) { active.delete(childId); },
@@ -81,5 +88,75 @@ describe('sleep application', () => {
     const list = vi.spyOn(repository, 'listRecentByChildId');
     await listRecentSleep(repository, 'child-1');
     expect(list).toHaveBeenCalledWith('child-1', 20);
+  });
+
+  it('records a normal completed event without changing an active session', async () => {
+    const { active, events, repository } = fakeRepository();
+    active.set('child-1', {
+      id: 'active', childId: 'child-1', startedAtEpochMs: 1_000,
+    });
+    const event = await recordCompletedSleep(
+      { repository, idGenerator: { generate: () => 'manual-1' } },
+      'child-1', 100, 1_000, 2_000,
+    );
+    expect(event).toEqual({
+      id: 'manual-1', childId: 'child-1', startedAtEpochMs: 100,
+      endedAtEpochMs: 1_000,
+    });
+    expect(active.get('child-1')?.id).toBe('active');
+    expect(events.get('manual-1')).toEqual(event);
+  });
+
+  it('rejects future and active-session-overlapping completed events', async () => {
+    const { active, repository } = fakeRepository();
+    active.set('child-1', {
+      id: 'active', childId: 'child-1', startedAtEpochMs: 1_000,
+    });
+    const dependencies = {
+      repository, idGenerator: { generate: () => 'manual-1' },
+    };
+    await expect(recordCompletedSleep(
+      dependencies, 'child-1', 100, 2_001, 2_000,
+    )).rejects.toMatchObject({ code: 'future-completed-sleep' });
+    await expect(recordCompletedSleep(
+      dependencies, 'child-1', 100, 1_001, 2_000,
+    )).rejects.toMatchObject({ code: 'overlaps-active-sleep' });
+  });
+
+  it('reconciles exact manual writes and classifies absent or mismatched outcomes', async () => {
+    const exact = fakeRepository();
+    exact.repository.saveCompleted = vi.fn(async (event) => {
+      exact.events.set(event.id, event);
+      throw new Error('uncertain');
+    });
+    await expect(recordCompletedSleep(
+      { repository: exact.repository, idGenerator: { generate: () => 'manual-1' } },
+      'child-1', 100, 200, 300,
+    )).resolves.toMatchObject({ id: 'manual-1' });
+
+    const absent = fakeRepository();
+    absent.repository.saveCompleted = vi.fn(async () => { throw new Error('failed'); });
+    await expect(recordCompletedSleep(
+      { repository: absent.repository, idGenerator: { generate: () => 'manual-2' } },
+      'child-1', 100, 200, 300,
+    )).rejects.toMatchObject({ code: 'completed-sleep-not-saved' });
+
+    const mismatch = fakeRepository();
+    mismatch.repository.saveCompleted = vi.fn(async (event) => {
+      mismatch.events.set(event.id, { ...event, endedAtEpochMs: 201 });
+      throw new Error('uncertain');
+    });
+    await expect(recordCompletedSleep(
+      { repository: mismatch.repository, idGenerator: { generate: () => 'manual-3' } },
+      'child-1', 100, 200, 300,
+    )).rejects.toMatchObject({ code: 'completed-sleep-outcome-uncertain' });
+
+    const unreadable = fakeRepository();
+    unreadable.repository.saveCompleted = vi.fn(async () => { throw new Error('failed'); });
+    unreadable.repository.getEventById = vi.fn(async () => { throw new Error('failed'); });
+    await expect(recordCompletedSleep(
+      { repository: unreadable.repository, idGenerator: { generate: () => 'manual-4' } },
+      'child-1', 100, 200, 300,
+    )).rejects.toMatchObject({ code: 'completed-sleep-outcome-uncertain' });
   });
 });

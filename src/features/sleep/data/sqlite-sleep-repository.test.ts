@@ -65,6 +65,42 @@ describe('SqliteSleepRepository', () => {
     await expect(repository.getEventById('child-1', 'sleep-1')).resolves.toEqual(event);
   });
 
+  it('inserts a completed manual event without replacing duplicates or touching active sleep', async () => {
+    const repository = new SqliteSleepRepository(adapter(database));
+    const active = { id: 'active', childId: 'child-1', startedAtEpochMs: 1_000 };
+    const event = {
+      id: 'manual-1', childId: 'child-1', startedAtEpochMs: 100,
+      endedAtEpochMs: 500,
+    };
+    await repository.createActive(active);
+    await repository.saveCompleted(event);
+    await expect(repository.getEventById('child-1', event.id)).resolves.toEqual(event);
+    await expect(repository.getActiveByChildId('child-1')).resolves.toEqual(active);
+    await expect(repository.saveCompleted({ ...event, endedAtEpochMs: 600 })).rejects.toThrow();
+    await expect(repository.getEventById('child-1', event.id)).resolves.toEqual(event);
+  });
+
+  it('uses a bound plain INSERT for completed manual events', async () => {
+    const calls: Array<readonly [string, readonly unknown[]]> = [];
+    const repository = new SqliteSleepRepository({
+      async execAsync() { return undefined; },
+      async getAllAsync() { return []; },
+      async getFirstAsync() { return null; },
+      async runAsync(source, params) {
+        calls.push([source, params]);
+        return { changes: 1 };
+      },
+    });
+    await repository.saveCompleted({
+      id: 'manual-1', childId: 'child-1', startedAtEpochMs: 100,
+      endedAtEpochMs: 200,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toContain('INSERT INTO sleep_events');
+    expect(calls[0]?.[0]).not.toMatch(/REPLACE|ON CONFLICT/);
+    expect(calls[0]?.[1]).toEqual(['manual-1', 'child-1', 100, 200]);
+  });
+
   it.each(['INSERT INTO sleep_events', 'DELETE FROM active_sleep_sessions'])(
     'rolls back both sides when completion fails at %s', async (failSql) => {
       const setup = new SqliteSleepRepository(adapter(database));

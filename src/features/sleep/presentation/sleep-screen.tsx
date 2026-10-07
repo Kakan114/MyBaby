@@ -17,6 +17,7 @@ import {
   groupSleepByLocalEndDate,
 } from './sleep-format';
 import { useSleep } from './use-sleep';
+import { ManualSleepEntry } from './manual-sleep-entry';
 
 export function SleepScreen() {
   const { t } = useTranslation();
@@ -91,6 +92,8 @@ export function SleepScreen() {
             </View>
           )}
         </Card>
+
+        <ManualSleepEntry childId={value.childId} controller={controller} />
 
         <View style={styles.history}>
           <AppText variant="headingMedium">{t('sleep.history.title')}</AppText>

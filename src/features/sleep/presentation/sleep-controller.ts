@@ -1,4 +1,5 @@
 import type { SleepRuntime, SleepRuntimeState } from '@/runtime/app-runtime';
+import { SleepApplicationError } from '../application/sleep';
 
 export type SleepPresentationState =
   | Readonly<{ status: 'loading' }>
@@ -6,6 +7,14 @@ export type SleepPresentationState =
   | Readonly<{ status: 'error' }>;
 
 type Listener = (state: SleepPresentationState) => void;
+
+export type ManualSleepRecordResult =
+  | 'saved'
+  | 'future'
+  | 'overlap'
+  | 'confirmed-not-saved'
+  | 'uncertain'
+  | 'busy';
 
 export function createSleepController(
   runtime: SleepRuntime,
@@ -55,6 +64,38 @@ export function createSleepController(
     }
   }
 
+  async function recordCompleted(
+    startedAtEpochMs: number,
+    endedAtEpochMs: number,
+  ): Promise<ManualSleepRecordResult> {
+    if (busy) return 'busy';
+    busy = true;
+    const request = ++requestId;
+    const previous = state;
+    if (state.status === 'ready') emit({ ...state, busy: true });
+    try {
+      const value = await runtime.recordCompleted({ startedAtEpochMs, endedAtEpochMs });
+      if (listener !== null && request === requestId) {
+        emit({ status: 'ready', value, busy: false, checkedAfterFailure: false });
+        return 'saved';
+      }
+      return 'uncertain';
+    } catch (error) {
+      if (listener !== null && request === requestId && previous.status === 'ready') {
+        emit({ ...previous, busy: false });
+      }
+      if (listener === null || request !== requestId) return 'uncertain';
+      if (error instanceof SleepApplicationError) {
+        if (error.code === 'future-completed-sleep') return 'future';
+        if (error.code === 'overlaps-active-sleep') return 'overlap';
+        if (error.code === 'completed-sleep-not-saved') return 'confirmed-not-saved';
+      }
+      return 'uncertain';
+    } finally {
+      busy = false;
+    }
+  }
+
   function tick(): void {
     if (state.status !== 'ready' || state.value.active === null) return;
     const nowEpochMs = now();
@@ -88,5 +129,6 @@ export function createSleepController(
         ? Promise.resolve()
         : mutate(() => runtime.discard(sessionId));
     },
+    recordCompleted,
   };
 }

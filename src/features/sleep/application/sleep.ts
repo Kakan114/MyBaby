@@ -11,7 +11,11 @@ export const RECENT_SLEEP_LIMIT = 20;
 
 export type SleepApplicationErrorCode =
   | 'clock-moved-backward'
-  | 'sleep-session-changed';
+  | 'sleep-session-changed'
+  | 'future-completed-sleep'
+  | 'overlaps-active-sleep'
+  | 'completed-sleep-not-saved'
+  | 'completed-sleep-outcome-uncertain';
 
 export class SleepApplicationError extends Error {
   constructor(readonly code: SleepApplicationErrorCode) {
@@ -78,6 +82,60 @@ export async function discardSleep(
     const active = await repository.getActiveByChildId(session.childId);
     if (active === null) return;
     throw error;
+  }
+}
+
+function sameSleepEvent(left: SleepEvent, right: SleepEvent): boolean {
+  return left.id === right.id &&
+    left.childId === right.childId &&
+    left.startedAtEpochMs === right.startedAtEpochMs &&
+    left.endedAtEpochMs === right.endedAtEpochMs;
+}
+
+export async function recordCompletedSleep(
+  dependencies: Readonly<{
+    repository: SleepRepository;
+    idGenerator: SleepIdGenerator;
+  }>,
+  childId: string,
+  startedAtEpochMs: number,
+  endedAtEpochMs: number,
+  currentEpochMs: number,
+): Promise<SleepEvent> {
+  if (endedAtEpochMs > currentEpochMs) {
+    throw new SleepApplicationError('future-completed-sleep');
+  }
+
+  const active = await dependencies.repository.getActiveByChildId(childId);
+  if (active !== null && endedAtEpochMs > active.startedAtEpochMs) {
+    throw new SleepApplicationError('overlaps-active-sleep');
+  }
+
+  const event = createSleepEvent({
+    id: dependencies.idGenerator.generate(),
+    childId,
+    startedAtEpochMs,
+    endedAtEpochMs,
+  });
+
+  try {
+    await dependencies.repository.saveCompleted(event);
+    return event;
+  } catch {
+    let canonical: SleepEvent | null;
+    try {
+      canonical = await dependencies.repository.getEventById(childId, event.id);
+    } catch {
+      throw new SleepApplicationError('completed-sleep-outcome-uncertain');
+    }
+
+    if (canonical === null) {
+      throw new SleepApplicationError('completed-sleep-not-saved');
+    }
+    if (!sameSleepEvent(canonical, event)) {
+      throw new SleepApplicationError('completed-sleep-outcome-uncertain');
+    }
+    return canonical;
   }
 }
 

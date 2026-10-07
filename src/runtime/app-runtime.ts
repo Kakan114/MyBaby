@@ -51,6 +51,7 @@ import {
   completeSleep as completeSleepUseCase,
   discardSleep as discardSleepUseCase,
   listRecentSleep as listRecentSleepUseCase,
+  recordCompletedSleep as recordCompletedSleepUseCase,
   SleepApplicationError,
   startSleep as startSleepUseCase,
 } from '../features/sleep/application/sleep';
@@ -96,6 +97,10 @@ export type SleepRuntime = Readonly<{
   start(): Promise<SleepRuntimeState>;
   complete(expectedSessionId: string): Promise<SleepRuntimeState>;
   discard(expectedSessionId: string): Promise<SleepRuntimeState>;
+  recordCompleted(input: Readonly<{
+    startedAtEpochMs: number;
+    endedAtEpochMs: number;
+  }>): Promise<SleepRuntimeState>;
 }>;
 
 export type FeedingHistoryRuntimeResult = Readonly<{
@@ -339,6 +344,11 @@ function sanitizeSleepRepository(repository: SleepRepository): SleepRepository {
     },
     async getEventById(childId, id) {
       try { return await repository.getEventById(childId, id); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async saveCompleted(event) {
+      try { await repository.saveCompleted(event); } catch {
         throw new AppRuntimeError('local-data-unavailable');
       }
     },
@@ -834,6 +844,24 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
           throw new SleepApplicationError('sleep-session-changed');
         }
         await discardSleepUseCase(repositories.sleepRepository, session);
+        return sleepState(repositories);
+      });
+    },
+    recordCompleted(input) {
+      return runSleepOperation(async () => {
+        const repositories = await initialize();
+        const activeChild = await getActiveChildUseCase(repositories);
+        if (activeChild === null) throw new SleepRuntimeError();
+        await recordCompletedSleepUseCase(
+          {
+            repository: repositories.sleepRepository,
+            idGenerator: sleepIdGenerator,
+          },
+          activeChild.id,
+          input.startedAtEpochMs,
+          input.endedAtEpochMs,
+          readEpochClock(),
+        );
         return sleepState(repositories);
       });
     },

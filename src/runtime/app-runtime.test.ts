@@ -97,6 +97,9 @@ class FakeSleepRepository implements SleepRepository {
   readonly getEventById = vi.fn(async (childId: string, id: string) => {
     return this.events.find((event) => event.childId === childId && event.id === id) ?? null;
   });
+  readonly saveCompleted = vi.fn(async (event: SleepEvent) => {
+    this.events.push(event);
+  });
   readonly createActive = vi.fn(async (session: ActiveSleepSession) => {
     this.active.set(session.childId, session);
   });
@@ -1440,5 +1443,57 @@ describe('sleep runtime boundary', () => {
     await feeding;
     await sleep;
     expect(fixture.sleepRepository.createActive).toHaveBeenCalledOnce();
+  });
+
+  it('records manual completed sleep for the runtime-resolved active child and refreshes history', async () => {
+    const fixture = await createActiveSleepFixture(() => 2_000);
+    const state = await fixture.runtime.sleep.recordCompleted({
+      startedAtEpochMs: 100,
+      endedAtEpochMs: 500,
+    });
+    expect(fixture.sleepRepository.saveCompleted).toHaveBeenCalledWith({
+      id: 'generated-sleep-id', childId: fixture.child.id,
+      startedAtEpochMs: 100, endedAtEpochMs: 500,
+    });
+    expect(state.childId).toBe(fixture.child.id);
+    expect(state.events).toContainEqual({
+      id: 'generated-sleep-id', childId: fixture.child.id,
+      startedAtEpochMs: 100, endedAtEpochMs: 500,
+    });
+  });
+
+  it('keeps an active session intact when a non-overlapping manual sleep is saved', async () => {
+    const fixture = await createActiveSleepFixture(() => 2_000);
+    const active = {
+      id: 'active', childId: fixture.child.id, startedAtEpochMs: 1_000,
+    };
+    fixture.sleepRepository.active.set(fixture.child.id, active);
+    await fixture.runtime.sleep.recordCompleted({
+      startedAtEpochMs: 100, endedAtEpochMs: 1_000,
+    });
+    expect(fixture.sleepRepository.active.get(fixture.child.id)).toEqual(active);
+  });
+
+  it('serializes manual sleep once against Feeding and releases the queue after failure', async () => {
+    const fixture = await createActiveSleepFixture(() => 2_000);
+    const started = createDeferred<void>();
+    const finish = createDeferred<void>();
+    fixture.sleepRepository.saveCompleted.mockImplementationOnce(async () => {
+      started.resolve();
+      await finish.promise;
+      throw new Error('write failed');
+    });
+    const manual = fixture.runtime.sleep.recordCompleted({
+      startedAtEpochMs: 100, endedAtEpochMs: 500,
+    });
+    await started.promise;
+    const feeding = fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 10, contents: 'formula',
+    });
+    await Promise.resolve();
+    expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
+    finish.resolve();
+    await expect(manual).rejects.toMatchObject({ code: 'completed-sleep-not-saved' });
+    await expect(feeding).resolves.toMatchObject({ kind: 'bottle' });
   });
 });
