@@ -41,6 +41,9 @@ function RootStack({ bootstrapStatus }: RootStackProps) {
         <Stack.Screen name="feeding" />
         <Stack.Screen name="feeding-history" />
         <Stack.Screen name="sleep" />
+        <Stack.Screen name="sleep-history" />
+        <Stack.Screen name="diapers" />
+        <Stack.Screen name="diaper-history" />
       </Stack.Protected>
 
       <Stack.Protected guard={bootstrapStatus === 'onboarding-required'}>

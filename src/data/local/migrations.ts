@@ -1,4 +1,4 @@
-export const LATEST_LOCAL_DATABASE_VERSION = 5;
+export const LATEST_LOCAL_DATABASE_VERSION = 6;
 
 export interface LocalMigrationTransaction {
   execAsync(source: string): Promise<void>;
@@ -183,6 +183,25 @@ const migrations: readonly Migration[] = [
           ),
         FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
       );
+    `);
+  },
+  async (transaction) => {
+    await transaction.execAsync(`
+      CREATE TABLE diaper_events (
+        id TEXT PRIMARY KEY NOT NULL CHECK (length(trim(id)) > 0),
+        child_id TEXT NOT NULL CHECK (length(trim(child_id)) > 0),
+        occurred_at_epoch_ms INTEGER NOT NULL
+          CHECK (
+            typeof(occurred_at_epoch_ms) = 'integer'
+            AND occurred_at_epoch_ms >= 0
+            AND occurred_at_epoch_ms <= 8640000000000000
+          ),
+        kind TEXT NOT NULL CHECK (kind IN ('wet', 'dirty', 'mixed')),
+        FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX diaper_events_child_occurred_id_idx
+        ON diaper_events (child_id, occurred_at_epoch_ms DESC, id DESC);
     `);
   },
 ];

@@ -13,7 +13,7 @@ import {
 } from '@/features/sleep/presentation/sleep-format';
 
 import { useSleepHubStatus } from './use-sleep-hub-status';
-import { openFeedingLog, openSleepLog } from './log-hub-navigation';
+import { openDiaperLog, openFeedingLog, openSleepLog } from './log-hub-navigation';
 
 export function LogHubScreen() {
   const { t } = useTranslation();
@@ -58,6 +58,11 @@ export function LogHubScreen() {
         <Button onPress={openSleepLog}>
           {t(activeSleep === null ? 'logging.sleep.open' : 'logging.sleep.openOngoing')}
         </Button>
+      </Card>
+      <Card style={styles.card}>
+        <AppText variant="headingMedium">{t('logging.diapers.title')}</AppText>
+        <AppText style={styles.secondary}>{t('logging.diapers.description')}</AppText>
+        <Button onPress={openDiaperLog}>{t('logging.diapers.open')}</Button>
       </Card>
     </Screen>
   );

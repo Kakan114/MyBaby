@@ -60,6 +60,16 @@ import {
   type ActiveSleepSession,
   type SleepEvent,
 } from '../features/sleep/domain/sleep';
+import type { DiaperIdGenerator } from '../features/diapers/application/diaper-id-generator';
+import type { DiaperRepository } from '../features/diapers/application/diaper-repository';
+import {
+  deleteDiaper as deleteDiaperUseCase,
+  listRecentDiapers as listRecentDiapersUseCase,
+  recordDiaper as recordDiaperUseCase,
+  updateDiaper as updateDiaperUseCase,
+  DiaperApplicationError,
+} from '../features/diapers/application/diaper';
+import type { DiaperEvent, DiaperKind } from '../features/diapers/domain/diaper-event';
 
 export type ChildrenRuntime = Readonly<{
   createChild(request: CreateChildRequest): Promise<Child>;
@@ -103,6 +113,30 @@ export type SleepRuntime = Readonly<{
   }>): Promise<SleepRuntimeState>;
 }>;
 
+export type DiaperRecordInput =
+  | Readonly<{ timing: 'now'; kind: DiaperKind }>
+  | Readonly<{ timing: 'historical'; kind: DiaperKind; occurredAtEpochMs: number }>;
+
+export type DiaperRuntimeState = Readonly<{
+  childId: string;
+  events: readonly DiaperEvent[];
+  nowEpochMs: number;
+}>;
+
+export type DiaperRuntime = Readonly<{
+  getState(): Promise<DiaperRuntimeState>;
+  record(input: DiaperRecordInput): Promise<Readonly<{
+    state: DiaperRuntimeState;
+    recordedEvent: DiaperEvent;
+  }>>;
+  delete(expected: DiaperEvent): Promise<DiaperRuntimeState>;
+  update(input: Readonly<{
+    expected: DiaperEvent;
+    kind: DiaperKind;
+    occurredAtEpochMs: number;
+  }>): Promise<DiaperRuntimeState>;
+}>;
+
 export type FeedingHistoryRuntimeResult = Readonly<{
   childId: string;
   events: readonly FeedingEvent[];
@@ -120,6 +154,7 @@ export type AppRuntime = Readonly<{
   children: ChildrenRuntime;
   feeding: FeedingRuntime;
   sleep: SleepRuntime;
+  diapers: DiaperRuntime;
   close(): Promise<void>;
 }>;
 
@@ -138,6 +173,14 @@ export class SleepRuntimeError extends Error {
   constructor() {
     super('An active child is required to track sleep.');
     this.name = 'SleepRuntimeError';
+  }
+}
+
+export class DiaperRuntimeError extends Error {
+  readonly code = 'active-child-required' as const;
+  constructor() {
+    super('An active child is required to log a diaper.');
+    this.name = 'DiaperRuntimeError';
   }
 }
 
@@ -165,9 +208,11 @@ export type AppRuntimeDependencies<TDatabase extends RuntimeDatabaseConnection> 
   createFeedingRepository(database: TDatabase): FeedingRepository;
   createBreastfeedingTimerRepository(database: TDatabase): BreastfeedingTimerRepository;
   createSleepRepository(database: TDatabase): SleepRepository;
+  createDiaperRepository(database: TDatabase): DiaperRepository;
   childIdGenerator: ChildIdGenerator;
   feedingIdGenerator: FeedingIdGenerator;
   sleepIdGenerator: SleepIdGenerator;
+  diaperIdGenerator: DiaperIdGenerator;
   getCurrentCalendarDate(): CalendarDate;
   getCurrentEpochMs(): number;
 }>;
@@ -179,6 +224,7 @@ type InitializedRuntime<TDatabase extends RuntimeDatabaseConnection> = Readonly<
   feedingRepository: FeedingRepository;
   breastfeedingTimerRepository: BreastfeedingTimerRepository;
   sleepRepository: SleepRepository;
+  diaperRepository: DiaperRepository;
 }>;
 
 function sanitizeActiveChildRepository(
@@ -276,7 +322,6 @@ function sanitizeFeedingRepository(repository: FeedingRepository): FeedingReposi
         throw new AppRuntimeError('local-data-unavailable');
       }
     },
-
     async save(event) {
       try {
         await repository.save(event);
@@ -389,6 +434,50 @@ function sanitizeSleepIdGenerator(generator: SleepIdGenerator): SleepIdGenerator
   };
 }
 
+function sanitizeDiaperRepository(repository: DiaperRepository): DiaperRepository {
+  return {
+    async save(event) {
+      try { await repository.save(event); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async getById(childId, id) {
+      try { return await repository.getById(childId, id); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async listRecentByChildId(childId, limit) {
+      try { return await repository.listRecentByChildId(childId, limit); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async deleteIfMatches(expected) {
+      try { return await repository.deleteIfMatches(expected); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+    async updateIfMatches(expected, replacement) {
+      try { return await repository.updateIfMatches(expected, replacement); } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+  };
+}
+
+function sanitizeDiaperIdGenerator(generator: DiaperIdGenerator): DiaperIdGenerator {
+  return {
+    generate() {
+      try {
+        const id = generator.generate();
+        if (id.trim().length === 0) throw new Error('Invalid generated diaper ID.');
+        return id;
+      } catch {
+        throw new AppRuntimeError('local-data-unavailable');
+      }
+    },
+  };
+}
+
 export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   dependencies: AppRuntimeDependencies<TDatabase>,
 ): AppRuntime {
@@ -404,6 +493,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     dependencies.feedingIdGenerator,
   );
   const sleepIdGenerator = sanitizeSleepIdGenerator(dependencies.sleepIdGenerator);
+  const diaperIdGenerator = sanitizeDiaperIdGenerator(dependencies.diaperIdGenerator);
 
   async function closeDatabase(database: TDatabase): Promise<void> {
     try {
@@ -445,6 +535,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       let feedingRepository: FeedingRepository;
       let breastfeedingTimerRepository: BreastfeedingTimerRepository;
       let sleepRepository: SleepRepository;
+      let diaperRepository: DiaperRepository;
 
       try {
         activeChildRepository = sanitizeActiveChildRepository(
@@ -461,6 +552,9 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         );
         sleepRepository = sanitizeSleepRepository(
           dependencies.createSleepRepository(database),
+        );
+        diaperRepository = sanitizeDiaperRepository(
+          dependencies.createDiaperRepository(database),
         );
       } catch {
         await closeDatabase(database);
@@ -479,6 +573,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         feedingRepository,
         breastfeedingTimerRepository,
         sleepRepository,
+        diaperRepository,
       };
       return initializedRuntime;
     })();
@@ -867,10 +962,94 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     },
   };
 
+  function runDiaperOperation<TResult>(operation: () => Promise<TResult>): Promise<TResult> {
+    return runOperation(() => runSerializedDatabaseAccess(operation));
+  }
+
+  async function diaperState(
+    repositories: Pick<InitializedRuntime<TDatabase>,
+      'activeChildRepository' | 'childRepository' | 'diaperRepository'>,
+  ): Promise<DiaperRuntimeState> {
+    const activeChild = await getActiveChildUseCase(repositories);
+    if (activeChild === null) throw new DiaperRuntimeError();
+    const events = await listRecentDiapersUseCase(repositories.diaperRepository, activeChild.id);
+    return { childId: activeChild.id, events, nowEpochMs: readEpochClock() };
+  }
+
+  const diapers: DiaperRuntime = {
+    getState() {
+      return runDiaperOperation(async () => diaperState(await initialize()));
+    },
+    record(input) {
+      return runDiaperOperation(async () => {
+        const repositories = await initialize();
+        const activeChild = await getActiveChildUseCase(repositories);
+        if (activeChild === null) throw new DiaperRuntimeError();
+        const currentEpochMs = readEpochClock();
+        const occurredAtEpochMs = input.timing === 'now'
+          ? currentEpochMs
+          : input.occurredAtEpochMs;
+        const recordedEvent = await recordDiaperUseCase(
+          { repository: repositories.diaperRepository, idGenerator: diaperIdGenerator },
+          activeChild.id,
+          occurredAtEpochMs,
+          currentEpochMs,
+          input.kind,
+        );
+        const events = await listRecentDiapersUseCase(
+          repositories.diaperRepository,
+          activeChild.id,
+        );
+        return {
+          recordedEvent,
+          state: { childId: activeChild.id, events, nowEpochMs: currentEpochMs },
+        };
+      });
+    },
+    delete(expected) {
+      return runDiaperOperation(async () => {
+        const repositories = await initialize();
+        const activeChild = await getActiveChildUseCase(repositories);
+        if (activeChild === null) throw new DiaperRuntimeError();
+        if (expected.childId !== activeChild.id) {
+          throw new DiaperApplicationError('diaper-event-changed');
+        }
+        await deleteDiaperUseCase(repositories.diaperRepository, expected);
+        return diaperState(repositories);
+      });
+    },
+    update(input) {
+      return runDiaperOperation(async () => {
+        const repositories = await initialize();
+        const activeChild = await getActiveChildUseCase(repositories);
+        if (activeChild === null) throw new DiaperRuntimeError();
+        if (input.expected.childId !== activeChild.id) {
+          throw new DiaperApplicationError('diaper-event-changed');
+        }
+        const currentEpochMs = readEpochClock();
+        await updateDiaperUseCase(
+          repositories.diaperRepository,
+          input.expected,
+          {
+            ...input.expected,
+            kind: input.kind,
+            occurredAtEpochMs: input.occurredAtEpochMs,
+          },
+          currentEpochMs,
+        );
+        const events = await listRecentDiapersUseCase(
+          repositories.diaperRepository, activeChild.id,
+        );
+        return { childId: activeChild.id, events, nowEpochMs: currentEpochMs };
+      });
+    },
+  };
+
   return {
     children,
     feeding,
     sleep,
+    diapers,
     close() {
       if (closePromise !== null) {
         return closePromise;

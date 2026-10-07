@@ -8,12 +8,13 @@ import {
   useState,
 } from 'react';
 
-import type { ChildrenRuntime, FeedingRuntime, SleepRuntime } from './app-runtime';
+import type { ChildrenRuntime, DiaperRuntime, FeedingRuntime, SleepRuntime } from './app-runtime';
 import { createProductionAppRuntime } from './create-production-app-runtime';
 
 const ChildrenRuntimeContext = createContext<ChildrenRuntime | null>(null);
 const FeedingRuntimeContext = createContext<FeedingRuntime | null>(null);
 const SleepRuntimeContext = createContext<SleepRuntime | null>(null);
+const DiaperRuntimeContext = createContext<DiaperRuntime | null>(null);
 
 export function AppRuntimeProvider({ children }: PropsWithChildren) {
   const [runtime] = useState(createProductionAppRuntime);
@@ -29,11 +30,21 @@ export function AppRuntimeProvider({ children }: PropsWithChildren) {
     <ChildrenRuntimeContext.Provider value={runtime.children}>
       <FeedingRuntimeContext.Provider value={runtime.feeding}>
         <SleepRuntimeContext.Provider value={runtime.sleep}>
-          {children}
+          <DiaperRuntimeContext.Provider value={runtime.diapers}>
+            {children}
+          </DiaperRuntimeContext.Provider>
         </SleepRuntimeContext.Provider>
       </FeedingRuntimeContext.Provider>
     </ChildrenRuntimeContext.Provider>
   );
+}
+
+export function useDiaperRuntime(): DiaperRuntime {
+  const runtime = useContext(DiaperRuntimeContext);
+  if (runtime === null) {
+    throw new Error('useDiaperRuntime must be used within AppRuntimeProvider.');
+  }
+  return runtime;
 }
 
 export function useSleepRuntime(): SleepRuntime {

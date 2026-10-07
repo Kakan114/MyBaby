@@ -7,3 +7,7 @@ export function openFeedingLog(): void {
 export function openSleepLog(): void {
   router.push('/sleep');
 }
+
+export function openDiaperLog(): void {
+  router.push('/diapers');
+}

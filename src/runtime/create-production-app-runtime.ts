@@ -8,6 +8,8 @@ import { SqliteFeedingRepository } from '../features/feeding/data/sqlite-feeding
 import { SqliteBreastfeedingTimerRepository } from '../features/feeding/data/sqlite-breastfeeding-timer-repository';
 import { ExpoSleepIdGenerator } from '../features/sleep/data/expo-sleep-id-generator';
 import { SqliteSleepRepository } from '../features/sleep/data/sqlite-sleep-repository';
+import { ExpoDiaperIdGenerator } from '../features/diapers/data/expo-diaper-id-generator';
+import { SqliteDiaperRepository } from '../features/diapers/data/sqlite-diaper-repository';
 
 import { createAppRuntime, type AppRuntime } from './app-runtime';
 
@@ -21,9 +23,11 @@ export function createProductionAppRuntime(): AppRuntime {
     createBreastfeedingTimerRepository: (database) =>
       new SqliteBreastfeedingTimerRepository(database),
     createSleepRepository: (database) => new SqliteSleepRepository(database),
+    createDiaperRepository: (database) => new SqliteDiaperRepository(database),
     childIdGenerator: new ExpoChildIdGenerator(),
     feedingIdGenerator: new ExpoFeedingIdGenerator(),
     sleepIdGenerator: new ExpoSleepIdGenerator(),
+    diaperIdGenerator: new ExpoDiaperIdGenerator(),
     getCurrentCalendarDate: getCurrentLocalCalendarDate,
     getCurrentEpochMs: Date.now,
   });

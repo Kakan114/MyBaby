@@ -18,6 +18,8 @@ import type { FeedingEvent } from '../features/feeding/domain/feeding-event';
 import type { BreastfeedingTimerSession } from '../features/feeding/domain/breastfeeding-timer';
 import type { SleepRepository } from '../features/sleep/application/sleep-repository';
 import type { ActiveSleepSession, SleepEvent } from '../features/sleep/domain/sleep';
+import type { DiaperRepository } from '../features/diapers/application/diaper-repository';
+import type { DiaperEvent } from '../features/diapers/domain/diaper-event';
 
 import {
   AppRuntimeError,
@@ -112,6 +114,31 @@ class FakeSleepRepository implements SleepRepository {
   });
 }
 
+class FakeDiaperRepository implements DiaperRepository {
+  readonly events: DiaperEvent[] = [];
+  readonly save = vi.fn(async (event: DiaperEvent) => { this.events.push(event); });
+  readonly getById = vi.fn(async (childId: string, id: string) =>
+    this.events.find((event) => event.childId === childId && event.id === id) ?? null);
+  readonly listRecentByChildId = vi.fn(async (childId: string, limit: number) =>
+    this.events.filter((event) => event.childId === childId).slice(0, limit));
+  readonly deleteIfMatches = vi.fn(async (expected: DiaperEvent) => {
+    const index = this.events.findIndex((event) => event.id === expected.id &&
+      event.childId === expected.childId && event.kind === expected.kind &&
+      event.occurredAtEpochMs === expected.occurredAtEpochMs);
+    if (index < 0) return false;
+    this.events.splice(index, 1);
+    return true;
+  });
+  readonly updateIfMatches = vi.fn(async (expected: DiaperEvent, replacement: DiaperEvent) => {
+    const index = this.events.findIndex((event) => event.id === expected.id &&
+      event.childId === expected.childId && event.kind === expected.kind &&
+      event.occurredAtEpochMs === expected.occurredAtEpochMs);
+    if (index < 0) return false;
+    this.events[index] = replacement;
+    return true;
+  });
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -135,6 +162,7 @@ function createRuntimeFixture(options?: {
   const feedingRepository = new FakeFeedingRepository();
   const breastfeedingTimerRepository = new FakeBreastfeedingTimerRepository();
   const sleepRepository = new FakeSleepRepository();
+  const diaperRepository = new FakeDiaperRepository();
   const openDatabase = vi.fn(options?.openDatabase ?? (async () => database));
   const createChildRepository = vi.fn(() => childRepository);
   const createActiveChildRepository = vi.fn(() => activeChildRepository);
@@ -145,10 +173,12 @@ function createRuntimeFixture(options?: {
     createFeedingRepository: () => feedingRepository,
     createBreastfeedingTimerRepository: () => breastfeedingTimerRepository,
     createSleepRepository: () => sleepRepository,
+    createDiaperRepository: () => diaperRepository,
     childIdGenerator: { generate: () => 'generated-child-id' },
     feedingIdGenerator:
       options?.feedingIdGenerator ?? { generate: () => 'generated-feeding-id' },
     sleepIdGenerator: { generate: () => 'generated-sleep-id' },
+    diaperIdGenerator: { generate: () => 'generated-diaper-id' },
     getCurrentCalendarDate: options?.getCurrentCalendarDate ?? (() => asOf),
     getCurrentEpochMs:
       options?.getCurrentEpochMs ?? (() => 1_765_000_000_123),
@@ -161,6 +191,7 @@ function createRuntimeFixture(options?: {
     feedingRepository,
     breastfeedingTimerRepository,
     sleepRepository,
+    diaperRepository,
     createActiveChildRepository,
     createChildRepository,
     openDatabase,
@@ -306,9 +337,11 @@ describe('application runtime', () => {
       createBreastfeedingTimerRepository: () =>
         new FakeBreastfeedingTimerRepository(),
       createSleepRepository: () => new FakeSleepRepository(),
+      createDiaperRepository: () => new FakeDiaperRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       sleepIdGenerator: { generate: () => 'generated-sleep-id' },
+      diaperIdGenerator: { generate: () => 'generated-diaper-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
     });
@@ -332,9 +365,11 @@ describe('application runtime', () => {
       createBreastfeedingTimerRepository: () =>
         new FakeBreastfeedingTimerRepository(),
       createSleepRepository: () => new FakeSleepRepository(),
+      createDiaperRepository: () => new FakeDiaperRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       sleepIdGenerator: { generate: () => 'generated-sleep-id' },
+      diaperIdGenerator: { generate: () => 'generated-diaper-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
     });
@@ -416,6 +451,7 @@ describe('application runtime', () => {
       createBreastfeedingTimerRepository: () =>
         new FakeBreastfeedingTimerRepository(),
       createSleepRepository: () => new FakeSleepRepository(),
+      createDiaperRepository: () => new FakeDiaperRepository(),
       childIdGenerator: {
         generate: () => {
           throw new Error('raw native UUID failure');
@@ -423,6 +459,7 @@ describe('application runtime', () => {
       },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       sleepIdGenerator: { generate: () => 'generated-sleep-id' },
+      diaperIdGenerator: { generate: () => 'generated-diaper-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
     });
@@ -1494,6 +1531,125 @@ describe('sleep runtime boundary', () => {
     expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
     finish.resolve();
     await expect(manual).rejects.toMatchObject({ code: 'completed-sleep-not-saved' });
+    await expect(feeding).resolves.toMatchObject({ kind: 'bottle' });
+  });
+
+  it('records Diaper now with one authoritative clock read and the runtime active child', async () => {
+    const getCurrentEpochMs = vi.fn(() => 2_000);
+    const fixture = await createActiveSleepFixture(getCurrentEpochMs);
+    const result = await fixture.runtime.diapers.record({ timing: 'now', kind: 'mixed' });
+    expect(fixture.diaperRepository.save).toHaveBeenCalledWith({
+      id: 'generated-diaper-id', childId: fixture.child.id,
+      occurredAtEpochMs: 2_000, kind: 'mixed',
+    });
+    expect(getCurrentEpochMs).toHaveBeenCalledOnce();
+    expect(result.state.events).toContainEqual(expect.objectContaining({ childId: fixture.child.id }));
+  });
+
+  it('accepts historical Diaper time, rejects future time, and never accepts a child ID', async () => {
+    const fixture = await createActiveSleepFixture(() => 2_000);
+    await expect(fixture.runtime.diapers.record({
+      timing: 'historical', kind: 'dirty', occurredAtEpochMs: 1_000,
+    })).resolves.toMatchObject({
+      recordedEvent: { childId: fixture.child.id },
+      state: { childId: fixture.child.id },
+    });
+    await expect(fixture.runtime.diapers.record({
+      timing: 'historical', kind: 'wet', occurredAtEpochMs: 2_001,
+    })).rejects.toMatchObject({ code: 'future-diaper' });
+    expect(fixture.diaperRepository.save).toHaveBeenCalledOnce();
+  });
+
+  it('returns the exact recorded DiaperEvent together with canonical recent history', async () => {
+    const fixture = await createActiveSleepFixture(() => 2_000);
+    const result = await fixture.runtime.diapers.record({ timing: 'now', kind: 'dirty' });
+    expect(result.recordedEvent).toEqual({
+      id: 'generated-diaper-id', childId: fixture.child.id,
+      occurredAtEpochMs: 2_000, kind: 'dirty',
+    });
+    expect(result.state.events).toEqual([result.recordedEvent]);
+    expect(fixture.diaperRepository.listRecentByChildId)
+      .toHaveBeenLastCalledWith(fixture.child.id, 20);
+  });
+
+  it('rejects stale-child Diaper corrections before repository mutation', async () => {
+    const fixture = await createActiveSleepFixture(() => 2_000);
+    const stale = {
+      id: 'event', childId: fixture.child.id, occurredAtEpochMs: 1_000, kind: 'wet' as const,
+    };
+    const nextChild: Child = {
+      id: 'child-2', displayName: 'Mira', dateOfBirth: createCalendarDate('2025-02-10'),
+    };
+    fixture.childRepository.children.set(nextChild.id, nextChild);
+    fixture.activeChildRepository.activeChildId = nextChild.id;
+    await expect(fixture.runtime.diapers.delete(stale)).rejects.toMatchObject({
+      code: 'diaper-event-changed',
+    });
+    await expect(fixture.runtime.diapers.update({
+      expected: stale, kind: 'dirty', occurredAtEpochMs: 900,
+    })).rejects.toMatchObject({ code: 'diaper-event-changed' });
+    expect(fixture.diaperRepository.deleteIfMatches).not.toHaveBeenCalled();
+    expect(fixture.diaperRepository.updateIfMatches).not.toHaveBeenCalled();
+  });
+
+  it('updates a Diaper in place and returns canonically refreshed ordering', async () => {
+    const fixture = await createActiveSleepFixture(() => 2_000);
+    const older = {
+      id: 'older', childId: fixture.child.id, occurredAtEpochMs: 500, kind: 'wet' as const,
+    };
+    const newer = {
+      id: 'newer', childId: fixture.child.id, occurredAtEpochMs: 1_000, kind: 'dirty' as const,
+    };
+    fixture.diaperRepository.events.push(older, newer);
+    const state = await fixture.runtime.diapers.update({
+      expected: older, kind: 'mixed', occurredAtEpochMs: 1_500,
+    });
+    expect(fixture.diaperRepository.updateIfMatches).toHaveBeenCalledWith(older, {
+      ...older, occurredAtEpochMs: 1_500, kind: 'mixed',
+    });
+    expect(state.events[0]).toEqual({ ...older, occurredAtEpochMs: 1_500, kind: 'mixed' });
+  });
+
+  it('serializes Diaper correction once and releases the shared queue after failure', async () => {
+    const fixture = await createActiveSleepFixture(() => 2_000);
+    const original = {
+      id: 'event', childId: fixture.child.id, occurredAtEpochMs: 1_000, kind: 'wet' as const,
+    };
+    fixture.diaperRepository.events.push(original);
+    const started = createDeferred<void>();
+    const finish = createDeferred<void>();
+    fixture.diaperRepository.deleteIfMatches.mockImplementationOnce(async () => {
+      started.resolve(); await finish.promise; throw new Error('ambiguous delete');
+    });
+    const deletion = fixture.runtime.diapers.delete(original);
+    await started.promise;
+    const feeding = fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 10, contents: 'formula',
+    });
+    await Promise.resolve();
+    expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
+    finish.resolve();
+    await expect(deletion).rejects.toMatchObject({ code: 'diaper-delete-not-applied' });
+    await expect(feeding).resolves.toMatchObject({ kind: 'bottle' });
+    expect(fixture.diaperRepository.deleteIfMatches).toHaveBeenCalledOnce();
+  });
+
+  it('serializes Diaper once against Feeding and releases the shared queue after failure', async () => {
+    const fixture = await createActiveSleepFixture(() => 2_000);
+    const started = createDeferred<void>();
+    const finish = createDeferred<void>();
+    fixture.diaperRepository.save.mockImplementationOnce(async () => {
+      started.resolve(); await finish.promise; throw new Error('write failed');
+    });
+    const diaper = fixture.runtime.diapers.record({ timing: 'now', kind: 'wet' });
+    await started.promise;
+    const feeding = fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 10, contents: 'formula',
+    });
+    await Promise.resolve();
+    expect(fixture.feedingRepository.save).not.toHaveBeenCalled();
+    finish.resolve();
+    await expect(diaper).rejects.toMatchObject({ code: 'diaper-not-saved' });
     await expect(feeding).resolves.toMatchObject({ kind: 'bottle' });
   });
 });

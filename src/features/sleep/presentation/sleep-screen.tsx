@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -7,20 +8,18 @@ import { Card } from '@/components/ui/card';
 import { Screen } from '@/components/ui/screen';
 import { lightColors, spacing } from '@/theme/tokens';
 
-import { activeSleepElapsedMs, sleepDurationMs, type SleepEvent } from '../domain/sleep';
+import { activeSleepElapsedMs } from '../domain/sleep';
 import {
   formatSleepClock,
-  formatSleepDateHeading,
-  formatSleepDuration,
   formatActiveSleepElapsed,
-  formatSleepRange,
-  groupSleepByLocalEndDate,
 } from './sleep-format';
 import { useSleep } from './use-sleep';
 import { ManualSleepEntry } from './manual-sleep-entry';
+import { openSleepHistory } from './sleep-history-navigation';
 
 export function SleepScreen() {
   const { t } = useTranslation();
+  const router = useRouter();
   const { state, controller } = useSleep();
 
   if (state.status === 'loading') {
@@ -38,7 +37,6 @@ export function SleepScreen() {
   const { value, busy, checkedAfterFailure } = state;
   const active = value.active;
   const elapsed = active === null ? null : activeSleepElapsedMs(active, value.nowEpochMs);
-  const groups = groupSleepByLocalEndDate(value.events);
 
   const confirmDiscard = () => Alert.alert(
     t('sleep.discard.title'), t('sleep.discard.message'), [
@@ -94,30 +92,12 @@ export function SleepScreen() {
         </Card>
 
         <ManualSleepEntry childId={value.childId} controller={controller} />
-
-        <View style={styles.history}>
-          <AppText variant="headingMedium">{t('sleep.history.title')}</AppText>
-          {groups.length === 0 ? <AppText style={styles.secondary}>{t('sleep.history.empty')}</AppText> :
-            groups.map((group) => (
-              <View key={group.key} style={styles.group}>
-                <AppText variant="headingSmall">{formatSleepDateHeading(
-                  group.headingEpochMs, value.nowEpochMs,
-                  { today: t('sleep.history.today'), yesterday: t('sleep.history.yesterday') },
-                )}</AppText>
-                {group.events.map((event) => <SleepEventCard event={event} key={event.id} />)}
-              </View>
-            ))}
-        </View>
+        <Button onPress={() => openSleepHistory((route) => router.push(route))} variant="secondary">
+          {t('sleep.history.open')}
+        </Button>
       </ScrollView>
     </Screen>
   );
-}
-
-function SleepEventCard({ event }: Readonly<{ event: SleepEvent }>) {
-  return <Card style={styles.eventCard}>
-    <AppText variant="label">{formatSleepRange(event)}</AppText>
-    <AppText style={styles.secondary}>{formatSleepDuration(sleepDurationMs(event))}</AppText>
-  </Card>;
 }
 
 const styles = StyleSheet.create({
@@ -126,9 +106,6 @@ const styles = StyleSheet.create({
   content: { padding: spacing.lg, gap: spacing.xl },
   introduction: { gap: spacing.sm },
   card: { width: '100%', gap: spacing.lg },
-  history: { gap: spacing.md },
-  group: { gap: spacing.md },
-  eventCard: { gap: spacing.xs },
   secondary: { color: lightColors.textSecondary },
   notice: { backgroundColor: lightColors.surfaceMuted, padding: spacing.md, gap: spacing.xs },
 });
