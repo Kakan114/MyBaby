@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const push = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', () => ({ router: { push } }));
 
-import { openDiaperLog, openFeedingLog, openSleepLog } from './log-hub-navigation';
+import { openDiaperLog, openFeedingLog, openSleepLog, openGrowthLog } from './log-hub-navigation';
 
 describe('Logga hub navigation', () => {
+  it('opens Growth logging', () => { openGrowthLog(); expect(push).toHaveBeenCalledWith('/growth'); });
   beforeEach(() => push.mockClear());
 
   it('keeps Feeding navigation unchanged', () => {

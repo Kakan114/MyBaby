@@ -11,3 +11,5 @@ export function openSleepLog(): void {
 export function openDiaperLog(): void {
   router.push('/diapers');
 }
+
+export function openGrowthLog(): void { router.push('/growth'); }

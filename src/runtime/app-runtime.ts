@@ -1,3 +1,7 @@
+import { createGrowthRuntime, type GrowthRuntime } from '../features/growth/runtime/create-growth-runtime';
+import type { GrowthRepository } from '../features/growth/application/growth-repository';
+import type { GrowthIdGenerator } from '../features/growth/application/growth';
+import type { ActiveChildSelection } from './active-child-selection';
 import { createTodayRuntime, type TodayRuntime } from '../features/today/runtime/create-today-runtime';
 import type { TodayReadRepositories } from '../features/today/application/get-today-summary';
 import type { LocalDayContext } from '../features/today/application/today-summary';
@@ -159,6 +163,8 @@ export type AppRuntime = Readonly<{
   sleep: SleepRuntime;
   diapers: DiaperRuntime;
   today: TodayRuntime;
+  growth: GrowthRuntime;
+  activeChildSelection: ActiveChildSelection;
   close(): Promise<void>;
 }>;
 
@@ -213,10 +219,12 @@ export type AppRuntimeDependencies<TDatabase extends RuntimeDatabaseConnection> 
   createBreastfeedingTimerRepository(database: TDatabase): BreastfeedingTimerRepository;
   createSleepRepository(database: TDatabase): SleepRepository;
   createDiaperRepository(database: TDatabase): DiaperRepository;
+  createGrowthRepository(database: TDatabase): GrowthRepository;
   childIdGenerator: ChildIdGenerator;
   feedingIdGenerator: FeedingIdGenerator;
   sleepIdGenerator: SleepIdGenerator;
   diaperIdGenerator: DiaperIdGenerator;
+  growthIdGenerator: GrowthIdGenerator;
   getCurrentCalendarDate(): CalendarDate;
   getCurrentEpochMs(): number;
   getLocalDayContext(nowEpochMs: number): LocalDayContext;
@@ -232,6 +240,7 @@ type InitializedRuntime<TDatabase extends RuntimeDatabaseConnection> = Readonly<
   breastfeedingTimerRepository: BreastfeedingTimerRepository;
   sleepRepository: SleepRepository;
   diaperRepository: DiaperRepository;
+  growthRepository: GrowthRepository;
 }>;
 
 function sanitizeActiveChildRepository(
@@ -544,6 +553,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       let breastfeedingTimerRepository: BreastfeedingTimerRepository;
       let sleepRepository: SleepRepository;
       let diaperRepository: DiaperRepository;
+      let growthRepository: GrowthRepository;
 
       try {
         todayReadRepositories = dependencies.createTodayReadRepositories(database);
@@ -562,6 +572,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         sleepRepository = sanitizeSleepRepository(
           dependencies.createSleepRepository(database),
         );
+        growthRepository = dependencies.createGrowthRepository(database);
         diaperRepository = sanitizeDiaperRepository(
           dependencies.createDiaperRepository(database),
         );
@@ -584,6 +595,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         breastfeedingTimerRepository,
         sleepRepository,
         diaperRepository,
+        growthRepository,
       };
       return initializedRuntime;
     })();
@@ -680,18 +692,36 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
 
   const selectionListeners = new Set<(switching: boolean) => void>();
   let selectionChanges = 0;
+  let selectionVersion = 0;
   function notifySelection() {
     for (const listener of selectionListeners) {
       // A presentation subscriber must never break a persisted operation.
       try { listener(selectionChanges > 0); } catch { /* subscriber is isolated */ }
     }
   }
-  const today = createTodayRuntime({
-    subscribeSelectionChange(listener) {
+  const activeChildSelection: ActiveChildSelection = {
+    scope: Object.freeze({}),
+    getVersion: () => selectionVersion,
+    isChanging: () => selectionChanges > 0,
+    subscribe(listener) {
+      if (closed) throw new AppRuntimeError('runtime-closed');
       selectionListeners.add(listener);
-      if (selectionChanges > 0) listener(true);
+      if (selectionChanges > 0) {
+        try { listener(true); } catch { /* subscriber is isolated */ }
+      }
       return () => { selectionListeners.delete(listener); };
     },
+  };
+  const growth = createGrowthRuntime({
+    runOperation,
+    withDatabaseQueue: runSerializedDatabaseAccess,
+    initialize,
+    selection: activeChildSelection,
+    idGenerator: dependencies.growthIdGenerator,
+    getCurrentCalendarDate: dependencies.getCurrentCalendarDate,
+  });
+  const today = createTodayRuntime({
+    subscribeSelectionChange: activeChildSelection.subscribe,
     runOperation,
     withDatabaseQueue: runSerializedDatabaseAccess,
     async initialize() {
@@ -777,6 +807,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
 
     setActiveChild(id) {
       return runOperation(async () => {
+        ++selectionVersion;
         ++selectionChanges;
         notifySelection();
         try {
@@ -1088,6 +1119,8 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   };
 
   return {
+    growth,
+    activeChildSelection,
     today,
     children,
     feeding,
@@ -1099,6 +1132,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       }
 
       closed = true;
+      selectionListeners.clear();
       const operationsToFinish = [...activeOperations];
 
       closePromise = (async () => {

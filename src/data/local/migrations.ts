@@ -1,4 +1,4 @@
-export const LATEST_LOCAL_DATABASE_VERSION = 6;
+export const LATEST_LOCAL_DATABASE_VERSION = 7;
 
 export interface LocalMigrationTransaction {
   execAsync(source: string): Promise<void>;
@@ -202,6 +202,30 @@ const migrations: readonly Migration[] = [
 
       CREATE INDEX diaper_events_child_occurred_id_idx
         ON diaper_events (child_id, occurred_at_epoch_ms DESC, id DESC);
+    `);
+  },
+  async (transaction) => {
+    await transaction.execAsync(`
+      CREATE TABLE growth_measurements (
+        id TEXT PRIMARY KEY NOT NULL CHECK (length(trim(id)) > 0),
+        child_id TEXT NOT NULL CHECK (length(trim(child_id)) > 0),
+        measured_on TEXT NOT NULL CHECK (
+          typeof(measured_on) = 'text' AND length(measured_on) = 10
+          AND measured_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+        ),
+        weight_grams INTEGER CHECK (weight_grams IS NULL OR (typeof(weight_grams) = 'integer' AND weight_grams BETWEEN 1 AND 200000)),
+        length_mm INTEGER CHECK (length_mm IS NULL OR (typeof(length_mm) = 'integer' AND length_mm BETWEEN 1 AND 3000)),
+        head_circumference_mm INTEGER CHECK (head_circumference_mm IS NULL OR (typeof(head_circumference_mm) = 'integer' AND head_circumference_mm BETWEEN 1 AND 1000)),
+        length_method TEXT CHECK (
+          (length_mm IS NULL AND length_method IS NULL) OR
+          (length_mm IS NOT NULL AND length_method IS NOT NULL AND length_method IN ('lying', 'standing', 'unknown'))
+        ),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (typeof(revision) = 'integer' AND revision BETWEEN 1 AND 9007199254740991),
+        CHECK (weight_grams IS NOT NULL OR length_mm IS NOT NULL OR head_circumference_mm IS NOT NULL),
+        FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
+      );
+      CREATE INDEX growth_measurements_child_date_id_idx
+        ON growth_measurements (child_id, measured_on DESC, id DESC);
     `);
   },
 ];

@@ -1,5 +1,7 @@
 // @refresh reset
 
+import type { GrowthRuntime } from '../features/growth/runtime/create-growth-runtime';
+import type { ActiveChildSelection } from './active-child-selection';
 import {
   createContext,
   type PropsWithChildren,
@@ -11,6 +13,8 @@ import {
 import type { TodayRuntime } from '../features/today/runtime/create-today-runtime';
 import type { ChildrenRuntime, DiaperRuntime, FeedingRuntime, SleepRuntime } from './app-runtime';
 import { createProductionAppRuntime } from './create-production-app-runtime';
+
+const GrowthRuntimeContext = createContext<Readonly<{ growth: GrowthRuntime; selection: ActiveChildSelection }> | null>(null);
 
 const TodayRuntimeContext = createContext<TodayRuntime | null>(null);
 
@@ -30,17 +34,19 @@ export function AppRuntimeProvider({ children }: PropsWithChildren) {
   );
 
   return (
-    <TodayRuntimeContext.Provider value={runtime.today}>
-      <ChildrenRuntimeContext.Provider value={runtime.children}>
-        <FeedingRuntimeContext.Provider value={runtime.feeding}>
-          <SleepRuntimeContext.Provider value={runtime.sleep}>
-            <DiaperRuntimeContext.Provider value={runtime.diapers}>
-              {children}
-            </DiaperRuntimeContext.Provider>
-          </SleepRuntimeContext.Provider>
-        </FeedingRuntimeContext.Provider>
-      </ChildrenRuntimeContext.Provider>
-    </TodayRuntimeContext.Provider>
+    <GrowthRuntimeContext.Provider value={{ growth: runtime.growth, selection: runtime.activeChildSelection }}>
+      <TodayRuntimeContext.Provider value={runtime.today}>
+        <ChildrenRuntimeContext.Provider value={runtime.children}>
+          <FeedingRuntimeContext.Provider value={runtime.feeding}>
+            <SleepRuntimeContext.Provider value={runtime.sleep}>
+              <DiaperRuntimeContext.Provider value={runtime.diapers}>
+                {children}
+              </DiaperRuntimeContext.Provider>
+            </SleepRuntimeContext.Provider>
+          </FeedingRuntimeContext.Provider>
+        </ChildrenRuntimeContext.Provider>
+      </TodayRuntimeContext.Provider>
+    </GrowthRuntimeContext.Provider>
   );
 }
 
@@ -83,5 +89,11 @@ export function useChildrenRuntime(): ChildrenRuntime {
 export function useTodayRuntime(): TodayRuntime {
   const runtime = useContext(TodayRuntimeContext);
   if (runtime === null) throw new Error('useTodayRuntime must be used within AppRuntimeProvider.');
+  return runtime;
+}
+
+export function useGrowthRuntime() {
+  const runtime = useContext(GrowthRuntimeContext);
+  if (runtime === null) throw new Error('useGrowthRuntime must be used within AppRuntimeProvider.');
   return runtime;
 }

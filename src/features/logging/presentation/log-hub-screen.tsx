@@ -1,4 +1,4 @@
-import { StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { AppText } from '@/components/ui/app-text';
@@ -13,7 +13,7 @@ import {
 } from '@/features/sleep/presentation/sleep-format';
 
 import { useSleepHubStatus } from './use-sleep-hub-status';
-import { openDiaperLog, openFeedingLog, openSleepLog } from './log-hub-navigation';
+import { openDiaperLog, openFeedingLog, openSleepLog, openGrowthLog } from './log-hub-navigation';
 
 export function LogHubScreen() {
   const { t } = useTranslation();
@@ -23,7 +23,7 @@ export function LogHubScreen() {
     ? null
     : activeSleepElapsedMs(activeSleep, sleepState.value.nowEpochMs);
   return (
-    <Screen style={styles.screen}>
+    <Screen><ScrollView contentContainerStyle={styles.screen}>
       <View style={styles.introduction}>
         <AppText variant="headingLarge">{t('logging.title')}</AppText>
         <AppText style={styles.secondary}>{t('logging.description')}</AppText>
@@ -64,12 +64,15 @@ export function LogHubScreen() {
         <AppText style={styles.secondary}>{t('logging.diapers.description')}</AppText>
         <Button onPress={openDiaperLog}>{t('logging.diapers.open')}</Button>
       </Card>
-    </Screen>
+      <Card style={styles.card}><AppText variant="headingMedium">{t('growth.title')}</AppText>
+        <AppText style={styles.secondary}>{t('growth.description')}</AppText>
+        <Button onPress={openGrowthLog}>{t('growth.open')}</Button></Card>
+    </ScrollView></Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { paddingTop: spacing.xl, gap: spacing.lg },
+  screen: { paddingTop: spacing.xl, paddingBottom: spacing.xxl, gap: spacing.lg },
   introduction: { gap: spacing.sm },
   card: { gap: spacing.md },
   sleepStatus: { gap: spacing.xs },

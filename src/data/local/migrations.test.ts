@@ -78,10 +78,10 @@ describe('local database migrations', () => {
     await migrateLocalDatabase(database);
 
     expect(database.userVersion).toBe(LATEST_LOCAL_DATABASE_VERSION);
-    expect(database.transactionCount).toBe(6);
-    expect(database.committedTransactionCount).toBe(6);
+    expect(database.transactionCount).toBe(7);
+    expect(database.committedTransactionCount).toBe(7);
     expect(database.rolledBackTransactionCount).toBe(0);
-    expect(database.executedStatements).toHaveLength(24);
+    expect(database.executedStatements).toHaveLength(28);
     expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
     expect(database.executedStatements[1]).toContain('CREATE TABLE children');
     expect(database.executedStatements[1]).toContain('id TEXT PRIMARY KEY NOT NULL');
@@ -127,9 +127,9 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(6);
-    expect(database.transactionCount).toBe(5);
-    expect(database.executedStatements).toHaveLength(20);
+    expect(database.userVersion).toBe(7);
+    expect(database.transactionCount).toBe(6);
+    expect(database.executedStatements).toHaveLength(24);
     expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE active_child_selection');
@@ -169,8 +169,8 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(6);
-    expect(database.transactionCount).toBe(4);
+    expect(database.userVersion).toBe(7);
+    expect(database.transactionCount).toBe(5);
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE feeding_events');
     expect(schema).toContain('FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE');
@@ -202,8 +202,8 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(6);
-    expect(database.transactionCount).toBe(3);
+    expect(database.userVersion).toBe(7);
+    expect(database.transactionCount).toBe(4);
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE breastfeeding_timer_session');
     expect(schema).toContain('id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1)');
@@ -224,8 +224,8 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(6);
-    expect(database.transactionCount).toBe(2);
+    expect(database.userVersion).toBe(7);
+    expect(database.transactionCount).toBe(3);
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE sleep_events');
     expect(schema).toContain('CREATE TABLE active_sleep_sessions');
@@ -247,18 +247,18 @@ describe('local database migrations', () => {
     await migrateLocalDatabase(database);
 
     const schema = database.executedStatements[1]!;
-    expect(database.userVersion).toBe(6);
+    expect(database.userVersion).toBe(7);
     expect(schema).toContain('CREATE TABLE diaper_events');
     expect(schema).toContain("kind TEXT NOT NULL CHECK (kind IN ('wet', 'dirty', 'mixed'))");
     expect(schema).toContain('FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE');
     expect(schema).toContain('ON diaper_events (child_id, occurred_at_epoch_ms DESC, id DESC)');
-    expect(database.executedStatements).toEqual([
+    expect(database.executedStatements.slice(0, 4)).toEqual([
       'BEGIN IMMEDIATE;', schema, 'PRAGMA user_version = 6;', 'COMMIT;',
     ]);
   });
 
-  it('does nothing when the database is already at version 6', async () => {
-    const database = new FakeMigrationDatabase(6);
+  it('does nothing when the database is already at version 7', async () => {
+    const database = new FakeMigrationDatabase(7);
 
     await migrateLocalDatabase(database);
 
@@ -267,7 +267,7 @@ describe('local database migrations', () => {
   });
 
   it('rejects a schema version newer than the app supports', async () => {
-    const database = new FakeMigrationDatabase(7);
+    const database = new FakeMigrationDatabase(8);
 
     await expect(migrateLocalDatabase(database)).rejects.toMatchObject({
       code: 'unsupported-database-version',

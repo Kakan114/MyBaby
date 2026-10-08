@@ -73,7 +73,7 @@ function currentConnection(calls: string[]) {
   const connection = createConnection(calls);
   connection.getFirstAsync = async <T>(source: string): Promise<T | null> => {
     calls.push(source);
-    return (source === 'PRAGMA user_version;' ? { user_version: 6 } : { count: 1 }) as T;
+    return (source === 'PRAGMA user_version;' ? { user_version: 7 } : { count: 1 }) as T;
   };
   return connection;
 }

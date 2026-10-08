@@ -1,3 +1,5 @@
+import { SqliteGrowthRepository } from '../features/growth/data/sqlite-growth-repository';
+import { ExpoGrowthIdGenerator } from '../features/growth/data/expo-growth-id-generator';
 import { getLocalDayContext } from '../features/today/data/local-day-context';
 import { openLocalDatabase } from '../data/local/open-local-database';
 import { ExpoChildIdGenerator } from '../features/children/data/expo-child-id-generator';
@@ -24,10 +26,12 @@ export function createProductionAppRuntime(): AppRuntime {
     createBreastfeedingTimerRepository: (database) =>
       new SqliteBreastfeedingTimerRepository(database),
     createSleepRepository: (database) => new SqliteSleepRepository(database),
+    createGrowthRepository: (database) => new SqliteGrowthRepository(database),
     createDiaperRepository: (database) => new SqliteDiaperRepository(database),
     childIdGenerator: new ExpoChildIdGenerator(),
     feedingIdGenerator: new ExpoFeedingIdGenerator(),
     sleepIdGenerator: new ExpoSleepIdGenerator(),
+    growthIdGenerator: new ExpoGrowthIdGenerator(),
     diaperIdGenerator: new ExpoDiaperIdGenerator(),
     getCurrentCalendarDate: getCurrentLocalCalendarDate,
     getCurrentEpochMs: Date.now,
