@@ -1,7 +1,9 @@
 export const sv = {
   growth: {
+    newMeasurement: 'Ny tillväxtmätning',
+    examples: { weight: 't.ex. 4,250', length: 't.ex. 54,5', head: 't.ex. 37,2' },
     title: 'Tillväxt', historyTitle: 'Tillväxthistorik',
-    description: 'Spara vikt, längd och huvudomfång. Du kan lämna värden tomma.',
+    description: 'Spara vikt, längd och huvudomfång. Du kan lämna värden tomma, men ange minst ett mätvärde.',
     open: 'Registrera tillväxt', historyOpen: 'Visa tillväxthistorik',
     date: 'Mätdatum', selectDate: 'Välj mätdatum', confirmDate: 'Välj datum',
     weight: 'Vikt (kg)', length: 'Längd/höjd (cm)', head: 'Huvudomfång (cm)',

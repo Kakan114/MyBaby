@@ -8,7 +8,7 @@ import { emptyGrowthDraft } from './growth-form';
 import type { GrowthState } from './growth-controller';
 
 const h = vi.hoisted(() => ({
-  state: {} as GrowthState, push: vi.fn(), alert: vi.fn(), save: vi.fn(), refresh: vi.fn(),
+  width: 390, fontScale: 1, state: {} as GrowthState, push: vi.fn(), alert: vi.fn(), save: vi.fn(), refresh: vi.fn(),
   loadMore: vi.fn(), checkStatus: vi.fn(), edit: vi.fn(), delete: vi.fn(), prepareDeleteConfirmation: vi.fn(), cancelEdit: vi.fn(), changeDraft: vi.fn(), recover: vi.fn(),
 }));
 vi.mock('react', async original => ({
@@ -18,8 +18,10 @@ vi.mock('react', async original => ({
 vi.mock('react-native', () => ({
   View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ScrollView: 'ScrollView', Modal: 'Modal',
   KeyboardAvoidingView: 'KeyboardAvoidingView', ActivityIndicator: 'ActivityIndicator',
+  useWindowDimensions: () => ({ width: h.width, height: 800, fontScale: h.fontScale, scale: 1 }),
   Platform: { OS: 'android' }, Alert: { alert: h.alert }, StyleSheet: { create: (value: unknown) => value },
 }));
+vi.mock('expo-symbols', () => ({ SymbolView: 'SymbolView' }));
 vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'SafeAreaView' }));
 vi.mock('@expo/ui/community/datetime-picker', () => ({ DateTimePicker: 'DateTimePicker' }));
 vi.mock('expo-router', () => ({ useRouter: () => ({ push: h.push }) }));
@@ -34,6 +36,7 @@ vi.mock('@/components/ui/card', () => import('../../../components/ui/card'));
 vi.mock('@/components/ui/screen', () => import('../../../components/ui/screen'));
 vi.mock('@/theme/tokens', () => import('../../../theme/tokens'));
 import { GrowthScreen } from './growth-screen';
+import { growthUsesStackedFields } from './growth-visuals';
 import { growthPickerDate, growthPickerValue } from './growth-date-field';
 type Host = { type: string; props: Record<string, any>; text: string };
 function expand(node: React.ReactNode): Host[] {
@@ -58,6 +61,7 @@ function button(nodes: Host[], label: string) {
 beforeEach(() => {
   vi.stubGlobal('React', React);
   vi.clearAllMocks();
+  h.width = 390; h.fontScale = 1;
   h.prepareDeleteConfirmation.mockImplementation((measurement: unknown) => () => h.delete(measurement));
   h.state = { status: 'ready', summary: { child, age: getChildAge(child.dateOfBirth, date) },
     snapshot: { child, context, value: { items: [measurement], nextCursor: null } },
@@ -66,6 +70,75 @@ beforeEach(() => {
 });
 
 describe('Growth native presentation contracts', () => {
+  it('shows one new-measurement heading and a decorative profile without invented identity', () => {
+    const nodes = render();
+    expect(text(nodes).match(/Ny tillväxtmätning/g)).toHaveLength(1);
+    expect(nodes.some(node => node.type === '#text' && node.text === 'Tillväxt')).toBe(false);
+    expect(nodes.some(node => node.type === 'Image')).toBe(false);
+    expect(nodes.some(node => node.type === 'SymbolView' && node.props.name.android === 'eco')).toBe(true);
+  });
+  it('provides exact Swedish examples without prefilled or inferred measurements', () => {
+    const nodes = render(); const inputs = nodes.filter(node => node.type === 'TextInput');
+    expect(inputs.map(node => node.props.placeholder)).toEqual(['t.ex. 4,250', 't.ex. 54,5', 't.ex. 37,2']);
+    expect(inputs.map(node => node.props.value)).toEqual(['', '', '']);
+    inputs[0].props.onChangeText('4,250');
+    expect(h.changeDraft).toHaveBeenCalledWith({ weight: '4,250' }, context);
+    expect(button(nodes, 'Liggande')).toBeUndefined();
+  });
+  it('uses distinct native measurement icons and hides decorative symbols from accessibility', () => {
+    const nodes = render();
+    for (const name of ['monitor_weight', 'straighten', 'child_care']) {
+      expect(nodes.some(node => node.type === 'SymbolView' && node.props.name.android === name)).toBe(true);
+    }
+    expect(nodes.filter(node => node.props.importantForAccessibility === 'no-hide-descendants').length).toBeGreaterThanOrEqual(3);
+    expect(text(nodes)).toContain('inte medicinska gränser');
+  });
+  it.each([[320, 1], [390, 1.8], [600, 2]])('stacks measurement fields at width %s and font scale %s', (width, fontScale) => {
+    h.width = width; h.fontScale = fontScale;
+    const nodes = render();
+    const rows = nodes.filter(node => node.type === 'View' && Array.isArray(node.props.style) &&
+      node.props.style[0]?.flexDirection === 'row' && node.props.style[1]?.flexDirection === 'column');
+    expect(rows).toHaveLength(3);
+    for (const input of nodes.filter(node => node.type === 'TextInput')) {
+      expect(JSON.stringify(input.props.style)).not.toContain('"height":');
+      expect(input.props.maxFontSizeMultiplier).toBeUndefined();
+    }
+  });
+  it('keeps regular-size measurement rows compact and chooses deterministic layout boundaries', () => {
+    expect(growthUsesStackedFields(359, 1)).toBe(true);
+    expect(growthUsesStackedFields(360, 1.3)).toBe(false);
+    expect(growthUsesStackedFields(390, 1.31)).toBe(true);
+    const rows = render().filter(node => node.type === 'View' && Array.isArray(node.props.style) &&
+      node.props.style[0]?.flexDirection === 'row' && node.props.style[1] === false);
+    expect(rows).toHaveLength(3);
+  });
+  it('exposes the selected date and full history surface as accessible controls', () => {
+    h.state = { ...h.state, draft: { ...emptyGrowthDraft, date } };
+    const nodes = render();
+    const dateControl = nodes.find(node => node.type === 'Pressable' && node.props.accessibilityLabel === 'Mätdatum')!;
+    expect(dateControl.props.accessibilityValue).toEqual({ text: date });
+    for (const control of [dateControl, button(nodes, 'Visa tillväxthistorik')]) {
+      expect(control.props.accessibilityRole).toBe('button');
+      expect(JSON.stringify(control.props.style({ pressed: false }))).toContain('"minHeight":64');
+      expect(control.props.accessibilityState.disabled).toBe(false);
+    }
+  });
+  it('keeps save loading semantics and history navigation disabled during mutation', () => {
+    h.state = { ...h.state, busy: true };
+    const nodes = render();
+    const save = button(nodes, 'Arbetar…');
+    expect(save.props.disabled).toBe(true);
+    expect(save.props.accessibilityState.busy).toBe(true);
+    expect(button(nodes, 'Visa tillväxthistorik').props.disabled).toBe(true);
+  });
+  it('preserves the edit form and original stored decimal values in the redesigned card', () => {
+    h.state = { ...h.state, editing: measurement, draft: { date, weight: '4,567', length: '56,7', head: '34,5', method: 'lying' } };
+    const nodes = render('history');
+    expect(text(nodes)).toContain('Redigera mätning');
+    expect(nodes.filter(node => node.type === 'TextInput').map(node => node.props.value)).toEqual(['4,567', '56,7', '34,5']);
+    button(nodes, 'Spara ändringar').props.onPress();
+    expect(h.save).toHaveBeenCalledTimes(1);
+  });
   it('shows the canonical child header, exact age, Swedish unit labels and accessible inputs', () => {
     const nodes = render(); const output = text(nodes);
     for (const label of ['Mio', '9 månader och 7 dagar', 'Mätdatum', 'Vikt (kg)', 'Längd/höjd (cm)', 'Huvudomfång (cm)']) expect(output).toContain(label);

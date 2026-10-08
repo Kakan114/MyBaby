@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { lightColors, spacing } from '@/theme/tokens';
 import { getCalendarDateParts, createCalendarDateFromParts, type CalendarDate } from '../../children/domain/calendar-date';
+import { GrowthNavigationControl } from './growth-visuals';
 import { civilDateFromAndroidDatePicker, civilDateFromLocalPicker, createAndroidDatePickerValue, createLocalPickerValue } from '../../../utils/local-civil-date-time';
 
 export function growthPickerValue(value: CalendarDate, android: boolean): Date {
@@ -41,9 +42,8 @@ export function GrowthDateField({ value, birthDate, disabled, onChange }: {
     onValueChange={(_event, date) => android ? confirm(date) : setDraft(date)} /> : null;
   return <View style={styles.field}>
     <AppText variant="label">{t('growth.date')}</AppText>
-    <Button accessibilityLabel={t('growth.date')} disabled={disabled} onPress={openPicker} variant="secondary">
-      {value ?? t('growth.selectDate')}
-    </Button>
+    <GrowthNavigationControl kind="calendar" accessibilityLabel={t('growth.date')} disabled={disabled}
+      onPress={openPicker} label={value ?? t('growth.selectDate')} />
     {android ? picker : <Modal visible={open && !disabled} transparent onRequestClose={() => setOpen(false)}>
       <View accessibilityViewIsModal style={styles.backdrop}><Card style={styles.field}>
         <AppText variant="headingSmall">{t('growth.date')}</AppText>{picker}

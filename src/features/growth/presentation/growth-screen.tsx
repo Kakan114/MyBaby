@@ -5,12 +5,13 @@ import { AppText } from '@/components/ui/app-text';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Screen } from '@/components/ui/screen';
-import { lightColors, spacing } from '@/theme/tokens';
+import { lightColors, radii, spacing } from '@/theme/tokens';
 import { useChildBootstrap } from '../../children/presentation/child-bootstrap-gate';
 import { formatChildAge } from '../../children/presentation/format-child-age';
 import { formatWeightKg, formatLengthCm, formatHeadCircumferenceCm } from '../domain/growth-units';
 import type { GrowthMeasurement } from '../domain/growth-measurement';
 import { GrowthForm } from './growth-form-view';
+import { GrowthIcon, GrowthNavigationControl } from './growth-visuals';
 import { useGrowth } from './use-growth';
 
 export function GrowthScreen({ mode }: { mode: 'recording' | 'history' }) {
@@ -33,10 +34,12 @@ export function GrowthScreen({ mode }: { mode: 'recording' | 'history' }) {
   </AppText>;
   return <Screen style={styles.screen}><KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
     <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={styles.content}>
-      <View style={styles.section}>
-        <AppText variant="headingLarge">{t(mode === 'recording' ? 'growth.title' : 'growth.historyTitle')}</AppText>
-        {state.summary !== null && <><AppText variant="headingMedium">{state.summary.child.displayName}</AppText>
-          <AppText style={styles.secondary}>{formatChildAge(state.summary.age, t)}</AppText></>}
+      <View style={styles.profile}>
+        {state.summary !== null && <>
+          <View style={styles.profileAccent}><GrowthIcon kind="leaf" /></View>
+          <View style={styles.profileText}><AppText variant="headingLarge">{state.summary.child.displayName}</AppText>
+            <AppText style={styles.secondary}>{formatChildAge(state.summary.age, t)}</AppText></View>
+        </>}
       </View>
       {feedback}
       {state.status === 'ready' && (state.feedback === 'conflict' || state.feedback === 'notFound') &&
@@ -74,10 +77,9 @@ export function GrowthScreen({ mode }: { mode: 'recording' | 'history' }) {
           {state.snapshot!.value.nextCursor !== null && <Button disabled={locked || state.paging || state.refreshing}
             onPress={() => void controller.loadMore()} variant="secondary">{t(state.paging ? 'growth.loadingMore' : 'growth.loadMore')}</Button>}
         </>}
-        <Button variant="secondary" disabled={state.busy}
-          onPress={() => router.push(mode === 'recording' ? '/growth-history' : '/growth')}>
-          {t(mode === 'recording' ? 'growth.historyOpen' : 'growth.open')}
-        </Button>
+        <GrowthNavigationControl kind="history" history disabled={state.busy}
+          onPress={() => router.push(mode === 'recording' ? '/growth-history' : '/growth')}
+          label={t(mode === 'recording' ? 'growth.historyOpen' : 'growth.open')} />
       </>}
     </ScrollView>
   </KeyboardAvoidingView></Screen>;
@@ -85,5 +87,8 @@ export function GrowthScreen({ mode }: { mode: 'recording' | 'history' }) {
 const styles = StyleSheet.create({
   screen: { paddingHorizontal: spacing.none }, flex: { flex: 1 },
   content: { padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.lg },
+  profile: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingVertical: spacing.sm },
+  profileAccent: { padding: spacing.lg, borderRadius: radii.full, backgroundColor: lightColors.accentSage },
+  profileText: { flex: 1, minWidth: 0, gap: spacing.xs },
   section: { gap: spacing.md }, secondary: { color: lightColors.textSecondary },
 });
