@@ -1,4 +1,6 @@
+import type { ComponentProps } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
+import { SymbolView } from 'expo-symbols';
 import { useTranslation } from 'react-i18next';
 
 import { AppText } from '@/components/ui/app-text';
@@ -13,7 +15,10 @@ import {
 } from '@/features/sleep/presentation/sleep-format';
 
 import { useSleepHubStatus } from './use-sleep-hub-status';
-import { openDiaperLog, openFeedingLog, openSleepLog, openGrowthLog } from './log-hub-navigation';
+import { openDiaperLog, openFeedingLog, openSleepLog, openGrowthLog, openMilestones } from './log-hub-navigation';
+
+const milestoneSymbol = { ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' } as const satisfies
+  ComponentProps<typeof SymbolView>['name'];
 
 export function LogHubScreen() {
   const { t } = useTranslation();
@@ -67,6 +72,15 @@ export function LogHubScreen() {
       <Card style={styles.card}><AppText variant="headingMedium">{t('growth.title')}</AppText>
         <AppText style={styles.secondary}>{t('growth.description')}</AppText>
         <Button onPress={openGrowthLog}>{t('growth.open')}</Button></Card>
+      <Card style={styles.card}>
+        <View style={styles.milestoneHeading}><View accessible={false} accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants" style={styles.milestoneIcon}>
+          <SymbolView name={milestoneSymbol} size={24} tintColor={lightColors.actionPrimary} />
+        </View>
+          <AppText variant="headingMedium">{t('logging.milestones.title')}</AppText></View>
+        <AppText style={styles.secondary}>{t('logging.milestones.description')}</AppText>
+        <Button onPress={openMilestones}>{t('logging.milestones.open')}</Button>
+      </Card>
     </ScrollView></Screen>
   );
 }
@@ -77,4 +91,6 @@ const styles = StyleSheet.create({
   card: { gap: spacing.md },
   sleepStatus: { gap: spacing.xs },
   secondary: { color: lightColors.textSecondary },
+  milestoneHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  milestoneIcon: { padding: spacing.sm, borderRadius: 9999, backgroundColor: lightColors.accentPeach },
 });

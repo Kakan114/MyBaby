@@ -16,7 +16,7 @@ describe('version 6 migration behavior', () => {
         .run('feeding', 'child', 100, 'breast', 60, 0, null, null);
       database.prepare('INSERT INTO sleep_events (id, child_id, started_at_epoch_ms, ended_at_epoch_ms) VALUES (?, ?, ?, ?)')
         .run('sleep', 'child', 100, 200);
-      database.exec('DROP TABLE growth_measurements; DROP TABLE diaper_events; PRAGMA user_version = 5;');
+      database.exec('DROP TABLE milestone_entries; DROP TABLE growth_measurements; DROP TABLE diaper_events; PRAGMA user_version = 5;');
 
       await migrateLocalDatabase({
         async execAsync(source: string) { database.exec(source); },
@@ -25,7 +25,7 @@ describe('version 6 migration behavior', () => {
         },
       });
 
-      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 7 });
+      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
       expect(database.prepare('SELECT id FROM children').all()).toEqual([{ id: 'child' }]);
       expect(database.prepare('SELECT id FROM feeding_events').all()).toEqual([{ id: 'feeding' }]);
       expect(database.prepare('SELECT id FROM sleep_events').all()).toEqual([{ id: 'sleep' }]);

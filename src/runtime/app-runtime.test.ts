@@ -1,4 +1,5 @@
 import type { GrowthRepository } from '../features/growth/application/growth-repository';
+import type { MilestoneRepository } from '../features/milestones/application/milestone-repository';
 import { getLocalDayContext } from '../features/today/data/local-day-context';
 import type { TodayReadRepositories } from '../features/today/application/get-today-summary';
 
@@ -40,6 +41,10 @@ import {
 
 function unusedGrowthRepository(): GrowthRepository {
   const unused = async (): Promise<never> => { throw new Error('Growth is unused in this fixture'); };
+  return { create: unused, getById: unused, listHistory: unused, updateIfMatches: unused, deleteIfMatches: unused };
+}
+function unusedMilestoneRepository(): MilestoneRepository {
+  const unused = async (): Promise<never> => { throw new Error('Milestones are unused in this fixture'); };
   return { create: unused, getById: unused, listHistory: unused, updateIfMatches: unused, deleteIfMatches: unused };
 }
 class FakeDatabase implements RuntimeDatabaseConnection {
@@ -191,12 +196,14 @@ function createRuntimeFixture(options?: {
     createBreastfeedingTimerRepository: () => breastfeedingTimerRepository,
     createSleepRepository: () => sleepRepository,
     createGrowthRepository: unusedGrowthRepository,
+    createMilestoneRepository: unusedMilestoneRepository,
     createDiaperRepository: () => diaperRepository,
     childIdGenerator: { generate: () => 'generated-child-id' },
     feedingIdGenerator:
       options?.feedingIdGenerator ?? { generate: () => 'generated-feeding-id' },
     sleepIdGenerator: { generate: () => 'generated-sleep-id' },
     growthIdGenerator: { generate: () => 'generated-growth-id' },
+    milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
     diaperIdGenerator: { generate: () => 'generated-diaper-id' },
     getCurrentCalendarDate: options?.getCurrentCalendarDate ?? (() => asOf),
     getCurrentEpochMs:
@@ -390,11 +397,13 @@ describe('application runtime', () => {
         new FakeBreastfeedingTimerRepository(),
       createSleepRepository: () => new FakeSleepRepository(),
       createGrowthRepository: unusedGrowthRepository,
+      createMilestoneRepository: unusedMilestoneRepository,
       createDiaperRepository: () => new FakeDiaperRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       sleepIdGenerator: { generate: () => 'generated-sleep-id' },
       growthIdGenerator: { generate: () => 'generated-growth-id' },
+      milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
       diaperIdGenerator: { generate: () => 'generated-diaper-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
@@ -422,11 +431,13 @@ describe('application runtime', () => {
         new FakeBreastfeedingTimerRepository(),
       createSleepRepository: () => new FakeSleepRepository(),
       createGrowthRepository: unusedGrowthRepository,
+      createMilestoneRepository: unusedMilestoneRepository,
       createDiaperRepository: () => new FakeDiaperRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       sleepIdGenerator: { generate: () => 'generated-sleep-id' },
       growthIdGenerator: { generate: () => 'generated-growth-id' },
+      milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
       diaperIdGenerator: { generate: () => 'generated-diaper-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
@@ -512,6 +523,7 @@ describe('application runtime', () => {
         new FakeBreastfeedingTimerRepository(),
       createSleepRepository: () => new FakeSleepRepository(),
       createGrowthRepository: unusedGrowthRepository,
+      createMilestoneRepository: unusedMilestoneRepository,
       createDiaperRepository: () => new FakeDiaperRepository(),
       childIdGenerator: {
         generate: () => {
@@ -521,6 +533,7 @@ describe('application runtime', () => {
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       sleepIdGenerator: { generate: () => 'generated-sleep-id' },
       growthIdGenerator: { generate: () => 'generated-growth-id' },
+      milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
       diaperIdGenerator: { generate: () => 'generated-diaper-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,

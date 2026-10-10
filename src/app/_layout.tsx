@@ -1,4 +1,5 @@
 import { GrowthPresentationProvider } from '@/features/growth/presentation/use-growth';
+import { MilestonePresentationProvider } from '@/features/milestones/presentation/use-milestones';
 import { Stack, usePathname } from 'expo-router';
 
 import '@/i18n';
@@ -17,7 +18,7 @@ export default function RootLayout() {
 
   return (
     <AppRuntimeProvider>
-      <GrowthPresentationProvider>
+      <MilestonePresentationProvider><GrowthPresentationProvider>
         <ChildBootstrapGate>
           {(bootstrapStatus) => bootstrapStatus === 'ready' ? (
             <BreastfeedingTimerProvider>
@@ -27,7 +28,7 @@ export default function RootLayout() {
             <RootStack bootstrapStatus={bootstrapStatus} />
           )}
         </ChildBootstrapGate>
-      </GrowthPresentationProvider>
+      </GrowthPresentationProvider></MilestonePresentationProvider>
     </AppRuntimeProvider>
   );
 }
@@ -49,6 +50,8 @@ function RootStack({ bootstrapStatus }: RootStackProps) {
         <Stack.Screen name="diaper-history" />
         <Stack.Screen name="growth" />
         <Stack.Screen name="growth-history" />
+        <Stack.Screen name="milestones" />
+        <Stack.Screen name="milestone-history" />
       </Stack.Protected>
 
       <Stack.Protected guard={bootstrapStatus === 'onboarding-required'}>

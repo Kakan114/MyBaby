@@ -1,5 +1,7 @@
 import { SqliteGrowthRepository } from '../features/growth/data/sqlite-growth-repository';
 import { ExpoGrowthIdGenerator } from '../features/growth/data/expo-growth-id-generator';
+import { SqliteMilestoneRepository } from '../features/milestones/data/sqlite-milestone-repository';
+import { ExpoMilestoneIdGenerator } from '../features/milestones/data/expo-milestone-id-generator';
 import { getLocalDayContext } from '../features/today/data/local-day-context';
 import { openLocalDatabase } from '../data/local/open-local-database';
 import { ExpoChildIdGenerator } from '../features/children/data/expo-child-id-generator';
@@ -27,11 +29,13 @@ export function createProductionAppRuntime(): AppRuntime {
       new SqliteBreastfeedingTimerRepository(database),
     createSleepRepository: (database) => new SqliteSleepRepository(database),
     createGrowthRepository: (database) => new SqliteGrowthRepository(database),
+    createMilestoneRepository: (database) => new SqliteMilestoneRepository(database),
     createDiaperRepository: (database) => new SqliteDiaperRepository(database),
     childIdGenerator: new ExpoChildIdGenerator(),
     feedingIdGenerator: new ExpoFeedingIdGenerator(),
     sleepIdGenerator: new ExpoSleepIdGenerator(),
     growthIdGenerator: new ExpoGrowthIdGenerator(),
+    milestoneIdGenerator: new ExpoMilestoneIdGenerator(),
     diaperIdGenerator: new ExpoDiaperIdGenerator(),
     getCurrentCalendarDate: getCurrentLocalCalendarDate,
     getCurrentEpochMs: Date.now,

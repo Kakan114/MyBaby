@@ -1,4 +1,4 @@
-export const LATEST_LOCAL_DATABASE_VERSION = 7;
+export const LATEST_LOCAL_DATABASE_VERSION = 8;
 
 export interface LocalMigrationTransaction {
   execAsync(source: string): Promise<void>;
@@ -226,6 +226,56 @@ const migrations: readonly Migration[] = [
       );
       CREATE INDEX growth_measurements_child_date_id_idx
         ON growth_measurements (child_id, measured_on DESC, id DESC);
+    `);
+  },
+  async (transaction) => {
+    await transaction.execAsync(`
+      CREATE TABLE milestone_entries (
+        id TEXT PRIMARY KEY NOT NULL CHECK (
+          typeof(id) = 'text' AND length(trim(id)) > 0
+        ),
+        child_id TEXT NOT NULL CHECK (
+          typeof(child_id) = 'text' AND length(trim(child_id)) > 0
+        ),
+        definition_id TEXT,
+        custom_title TEXT,
+        note TEXT,
+        occurred_on TEXT NOT NULL CHECK (
+          typeof(occurred_on) = 'text'
+          AND length(occurred_on) = 10
+          AND occurred_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+        ),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (
+          typeof(revision) = 'integer'
+          AND revision BETWEEN 1 AND 9007199254740991
+        ),
+        FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE,
+        CHECK (
+          (
+            definition_id IS NOT NULL
+            AND typeof(definition_id) = 'text'
+            AND length(trim(definition_id)) > 0
+            AND custom_title IS NULL
+          )
+          OR
+          (
+            definition_id IS NULL
+            AND custom_title IS NOT NULL
+            AND typeof(custom_title) = 'text'
+            AND length(trim(custom_title)) BETWEEN 1 AND 80
+          )
+        ),
+        CHECK (
+          note IS NULL
+          OR (
+            typeof(note) = 'text'
+            AND length(trim(note)) BETWEEN 1 AND 500
+          )
+        )
+      );
+
+      CREATE INDEX milestone_entries_child_date_id_idx
+        ON milestone_entries (child_id, occurred_on DESC, id DESC);
     `);
   },
 ];

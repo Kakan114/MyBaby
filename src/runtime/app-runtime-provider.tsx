@@ -1,6 +1,7 @@
 // @refresh reset
 
 import type { GrowthRuntime } from '../features/growth/runtime/create-growth-runtime';
+import type { MilestoneRuntime } from '../features/milestones/runtime/create-milestone-runtime';
 import type { ActiveChildSelection } from './active-child-selection';
 import {
   createContext,
@@ -15,6 +16,7 @@ import type { ChildrenRuntime, DiaperRuntime, FeedingRuntime, SleepRuntime } fro
 import { createProductionAppRuntime } from './create-production-app-runtime';
 
 const GrowthRuntimeContext = createContext<Readonly<{ growth: GrowthRuntime; selection: ActiveChildSelection }> | null>(null);
+const MilestoneRuntimeContext = createContext<Readonly<{ milestones: MilestoneRuntime; selection: ActiveChildSelection }> | null>(null);
 
 const TodayRuntimeContext = createContext<TodayRuntime | null>(null);
 
@@ -34,7 +36,8 @@ export function AppRuntimeProvider({ children }: PropsWithChildren) {
   );
 
   return (
-    <GrowthRuntimeContext.Provider value={{ growth: runtime.growth, selection: runtime.activeChildSelection }}>
+    <MilestoneRuntimeContext.Provider value={{ milestones: runtime.milestones, selection: runtime.activeChildSelection }}>
+      <GrowthRuntimeContext.Provider value={{ growth: runtime.growth, selection: runtime.activeChildSelection }}>
       <TodayRuntimeContext.Provider value={runtime.today}>
         <ChildrenRuntimeContext.Provider value={runtime.children}>
           <FeedingRuntimeContext.Provider value={runtime.feeding}>
@@ -46,7 +49,8 @@ export function AppRuntimeProvider({ children }: PropsWithChildren) {
           </FeedingRuntimeContext.Provider>
         </ChildrenRuntimeContext.Provider>
       </TodayRuntimeContext.Provider>
-    </GrowthRuntimeContext.Provider>
+      </GrowthRuntimeContext.Provider>
+    </MilestoneRuntimeContext.Provider>
   );
 }
 
@@ -95,5 +99,11 @@ export function useTodayRuntime(): TodayRuntime {
 export function useGrowthRuntime() {
   const runtime = useContext(GrowthRuntimeContext);
   if (runtime === null) throw new Error('useGrowthRuntime must be used within AppRuntimeProvider.');
+  return runtime;
+}
+
+export function useMilestoneRuntime() {
+  const runtime = useContext(MilestoneRuntimeContext);
+  if (runtime === null) throw new Error('useMilestoneRuntime must be used within AppRuntimeProvider.');
   return runtime;
 }

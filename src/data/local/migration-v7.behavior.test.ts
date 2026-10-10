@@ -14,7 +14,7 @@ function adapter(db: DatabaseSync): LocalMigrationDatabase {
 }
 async function populatedV6() {
   const db = await createMigratedTestDatabase();
-  db.exec(`DROP TABLE growth_measurements; PRAGMA user_version = 6;
+  db.exec(`DROP TABLE milestone_entries; DROP TABLE growth_measurements; PRAGMA user_version = 6;
     INSERT INTO children VALUES ('child', 'Mio', '2024-01-01');
     INSERT INTO active_child_selection VALUES (1, 'child');
     INSERT INTO feeding_events (id,child_id,occurred_at_epoch_ms,kind,left_duration_seconds,right_duration_seconds)
@@ -39,7 +39,7 @@ describe('Growth migration v7', () => {
   it('creates constrained Growth table/index on a fresh database', async () => {
     const db = await createMigratedTestDatabase();
     try {
-      expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 7 });
+      expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
       expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'growth_measurements_child_date_id_idx'").get())
         .toEqual({ name: 'growth_measurements_child_date_id_idx' });
       expect(db.prepare('SELECT * FROM growth_measurements').all()).toEqual([]);
@@ -52,8 +52,8 @@ describe('Growth migration v7', () => {
       const schema = db.prepare('SELECT name,sql FROM sqlite_master ORDER BY name').all();
       await migrateLocalDatabase(adapter(db));
       expect(snapshot(db)).toEqual(records);
-      expect(db.prepare("SELECT name,sql FROM sqlite_master WHERE name NOT LIKE 'growth_measurements%' AND name NOT LIKE 'sqlite_autoindex_growth_measurements%' ORDER BY name").all()).toEqual(schema);
-      expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 7 });
+      expect(db.prepare("SELECT name,sql FROM sqlite_master WHERE name NOT LIKE 'growth_measurements%' AND name NOT LIKE 'sqlite_autoindex_growth_measurements%' AND name NOT LIKE 'milestone_entries%' AND name NOT LIKE 'sqlite_autoindex_milestone_entries%' ORDER BY name").all()).toEqual(schema);
+      expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
     } finally { db.close(); }
   });
   it.each(['CREATE INDEX growth_measurements', 'PRAGMA user_version = 7;', 'COMMIT;'])(
@@ -73,7 +73,7 @@ describe('Growth migration v7', () => {
         expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 6 });
         expect(db.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%growth_measurements%'").all()).toEqual([]);
         await migrateLocalDatabase(adapter(db));
-        expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 7 });
+        expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
       } finally { db.close(); }
     },
   );

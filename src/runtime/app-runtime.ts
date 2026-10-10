@@ -1,6 +1,9 @@
 import { createGrowthRuntime, type GrowthRuntime } from '../features/growth/runtime/create-growth-runtime';
 import type { GrowthRepository } from '../features/growth/application/growth-repository';
 import type { GrowthIdGenerator } from '../features/growth/application/growth';
+import { createMilestoneRuntime, type MilestoneRuntime } from '../features/milestones/runtime/create-milestone-runtime';
+import type { MilestoneRepository } from '../features/milestones/application/milestone-repository';
+import type { MilestoneIdGenerator } from '../features/milestones/application/milestone';
 import type { ActiveChildSelection } from './active-child-selection';
 import { createTodayRuntime, type TodayRuntime } from '../features/today/runtime/create-today-runtime';
 import type { TodayReadRepositories } from '../features/today/application/get-today-summary';
@@ -164,6 +167,7 @@ export type AppRuntime = Readonly<{
   diapers: DiaperRuntime;
   today: TodayRuntime;
   growth: GrowthRuntime;
+  milestones: MilestoneRuntime;
   activeChildSelection: ActiveChildSelection;
   close(): Promise<void>;
 }>;
@@ -220,11 +224,13 @@ export type AppRuntimeDependencies<TDatabase extends RuntimeDatabaseConnection> 
   createSleepRepository(database: TDatabase): SleepRepository;
   createDiaperRepository(database: TDatabase): DiaperRepository;
   createGrowthRepository(database: TDatabase): GrowthRepository;
+  createMilestoneRepository(database: TDatabase): MilestoneRepository;
   childIdGenerator: ChildIdGenerator;
   feedingIdGenerator: FeedingIdGenerator;
   sleepIdGenerator: SleepIdGenerator;
   diaperIdGenerator: DiaperIdGenerator;
   growthIdGenerator: GrowthIdGenerator;
+  milestoneIdGenerator: MilestoneIdGenerator;
   getCurrentCalendarDate(): CalendarDate;
   getCurrentEpochMs(): number;
   getLocalDayContext(nowEpochMs: number): LocalDayContext;
@@ -241,6 +247,7 @@ type InitializedRuntime<TDatabase extends RuntimeDatabaseConnection> = Readonly<
   sleepRepository: SleepRepository;
   diaperRepository: DiaperRepository;
   growthRepository: GrowthRepository;
+  milestoneRepository: MilestoneRepository;
 }>;
 
 function sanitizeActiveChildRepository(
@@ -554,6 +561,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       let sleepRepository: SleepRepository;
       let diaperRepository: DiaperRepository;
       let growthRepository: GrowthRepository;
+      let milestoneRepository: MilestoneRepository;
 
       try {
         todayReadRepositories = dependencies.createTodayReadRepositories(database);
@@ -573,6 +581,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
           dependencies.createSleepRepository(database),
         );
         growthRepository = dependencies.createGrowthRepository(database);
+        milestoneRepository = dependencies.createMilestoneRepository(database);
         diaperRepository = sanitizeDiaperRepository(
           dependencies.createDiaperRepository(database),
         );
@@ -596,6 +605,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         sleepRepository,
         diaperRepository,
         growthRepository,
+        milestoneRepository,
       };
       return initializedRuntime;
     })();
@@ -718,6 +728,14 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     initialize,
     selection: activeChildSelection,
     idGenerator: dependencies.growthIdGenerator,
+    getCurrentCalendarDate: dependencies.getCurrentCalendarDate,
+  });
+  const milestones = createMilestoneRuntime({
+    runOperation,
+    withDatabaseQueue: runSerializedDatabaseAccess,
+    initialize,
+    selection: activeChildSelection,
+    idGenerator: dependencies.milestoneIdGenerator,
     getCurrentCalendarDate: dependencies.getCurrentCalendarDate,
   });
   const today = createTodayRuntime({
@@ -1120,6 +1138,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
 
   return {
     growth,
+    milestones,
     activeChildSelection,
     today,
     children,

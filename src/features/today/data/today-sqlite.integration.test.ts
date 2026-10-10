@@ -1,4 +1,5 @@
 import { SqliteGrowthRepository } from '../../growth/data/sqlite-growth-repository';
+import { SqliteMilestoneRepository } from '../../milestones/data/sqlite-milestone-repository';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -74,6 +75,7 @@ beforeEach(async () => {
     createBreastfeedingTimerRepository: (connection) => new SqliteBreastfeedingTimerRepository(connection),
     createSleepRepository: (connection) => new SqliteSleepRepository(connection),
     createGrowthRepository: (connection) => new SqliteGrowthRepository(connection),
+    createMilestoneRepository: (connection) => new SqliteMilestoneRepository(connection),
     createDiaperRepository: (connection) => new SqliteDiaperRepository(connection),
     createTodayReadRepositories(connection) {
       readers = {
@@ -90,6 +92,7 @@ beforeEach(async () => {
     feedingIdGenerator: { generate: () => 'feeding-' + ++generated },
     sleepIdGenerator: { generate: () => 'sleep-' + ++generated },
     growthIdGenerator: { generate: () => 'generated-growth-id' },
+    milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
     diaperIdGenerator: { generate: () => 'diaper-' + ++generated },
   });
 });
@@ -112,7 +115,7 @@ describe('Today real schema-v6 SQLite/runtime integration', () => {
     expect(result.feeding).toEqual({ dayCount: 0, latestCompletedAtEpochMs: null });
     expect(result.diapers).toEqual({ dayCount: 0, latestOccurredAtEpochMs: null });
     expect(result.sleep).toEqual({ completedDurationMs: 0, active: null });
-    expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 7 });
+    expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
     expect(db.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
   });
 

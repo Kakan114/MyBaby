@@ -13,6 +13,7 @@ import { SqliteBreastfeedingTimerRepository } from '../../feeding/data/sqlite-br
 import { SqliteSleepRepository } from '../../sleep/data/sqlite-sleep-repository';
 import { SqliteDiaperRepository } from '../../diapers/data/sqlite-diaper-repository';
 import { SqliteGrowthRepository } from '../data/sqlite-growth-repository';
+import { SqliteMilestoneRepository } from '../../milestones/data/sqlite-milestone-repository';
 import { getLocalDayContext } from '../../today/data/local-day-context';
 import { createCalendarDate } from '../../children/domain/calendar-date';
 
@@ -66,11 +67,13 @@ function composition(db: DatabaseSync, closeConnection: () => Promise<void> = as
     createSleepRepository: database => new SqliteSleepRepository(database),
     createDiaperRepository: database => new SqliteDiaperRepository(database),
     createGrowthRepository,
+    createMilestoneRepository: database => new SqliteMilestoneRepository(database),
     createTodayReadRepositories: () => readers,
     getCurrentCalendarDate: () => date,
     getCurrentEpochMs: () => Date.parse('2026-10-08T12:00:00Z'),
     getLocalDayContext,
     growthIdGenerator: { generate: () => 'growth-' + ++id },
+    milestoneIdGenerator: { generate: () => 'milestone-' + ++id },
     childIdGenerator: { generate: () => 'child-' + ++id },
     feedingIdGenerator: { generate: () => 'feeding-' + ++id },
     sleepIdGenerator: { generate: () => 'sleep-' + ++id },
