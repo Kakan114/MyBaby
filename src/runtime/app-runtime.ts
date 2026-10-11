@@ -4,6 +4,23 @@ import type { GrowthIdGenerator } from '../features/growth/application/growth';
 import { createMilestoneRuntime, type MilestoneRuntime } from '../features/milestones/runtime/create-milestone-runtime';
 import type { MilestoneRepository } from '../features/milestones/application/milestone-repository';
 import type { MilestoneIdGenerator } from '../features/milestones/application/milestone';
+import {
+  createReminderRuntime,
+  ReminderRuntimeError,
+  type ReminderRuntime,
+} from '../features/reminders/runtime/create-reminder-runtime';
+import type { ReminderRepository } from '../features/reminders/application/reminder-repository';
+import type { ReminderIdGenerator } from '../features/reminders/application/reminder';
+import type { Reminder } from '../features/reminders/domain/reminder';
+import {
+  createReminderNotificationCoordinator,
+  REMINDER_NOTIFICATION_PROJECTION_LIMIT,
+  type ReminderNotificationReconciliationResult,
+} from '../services/notifications/reminder-notification-coordinator';
+import type {
+  ReminderNotificationPermissionStatus,
+  ReminderNotificationService,
+} from '../services/notifications/reminder-notification-service';
 import type { ActiveChildSelection } from './active-child-selection';
 import { createTodayRuntime, type TodayRuntime } from '../features/today/runtime/create-today-runtime';
 import type { TodayReadRepositories } from '../features/today/application/get-today-summary';
@@ -168,8 +185,19 @@ export type AppRuntime = Readonly<{
   today: TodayRuntime;
   growth: GrowthRuntime;
   milestones: MilestoneRuntime;
+  reminders: ReminderRuntime;
+  reminderNotifications: ReminderNotificationsRuntime;
   activeChildSelection: ActiveChildSelection;
   close(): Promise<void>;
+}>;
+
+export type ReminderNotificationsRuntime = Readonly<{
+  getPermissionStatus(): Promise<ReminderNotificationPermissionStatus | 'unavailable'>;
+  requestPermission(): Promise<Readonly<{
+    permission: ReminderNotificationPermissionStatus | 'unavailable';
+    reconciliation: ReminderNotificationReconciliationResult | null;
+  }>>;
+  reconcile(): Promise<ReminderNotificationReconciliationResult>;
 }>;
 
 export class FeedingRuntimeError extends Error {
@@ -225,12 +253,15 @@ export type AppRuntimeDependencies<TDatabase extends RuntimeDatabaseConnection> 
   createDiaperRepository(database: TDatabase): DiaperRepository;
   createGrowthRepository(database: TDatabase): GrowthRepository;
   createMilestoneRepository(database: TDatabase): MilestoneRepository;
+  createReminderRepository(database: TDatabase): ReminderRepository;
+  reminderNotificationService?: ReminderNotificationService;
   childIdGenerator: ChildIdGenerator;
   feedingIdGenerator: FeedingIdGenerator;
   sleepIdGenerator: SleepIdGenerator;
   diaperIdGenerator: DiaperIdGenerator;
   growthIdGenerator: GrowthIdGenerator;
   milestoneIdGenerator: MilestoneIdGenerator;
+  reminderIdGenerator: ReminderIdGenerator;
   getCurrentCalendarDate(): CalendarDate;
   getCurrentEpochMs(): number;
   getLocalDayContext(nowEpochMs: number): LocalDayContext;
@@ -248,6 +279,7 @@ type InitializedRuntime<TDatabase extends RuntimeDatabaseConnection> = Readonly<
   diaperRepository: DiaperRepository;
   growthRepository: GrowthRepository;
   milestoneRepository: MilestoneRepository;
+  reminderRepository: ReminderRepository;
 }>;
 
 function sanitizeActiveChildRepository(
@@ -511,6 +543,18 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   let timerBusy = false;
   let databaseAccessTail: Promise<void> = Promise.resolve();
   const activeOperations = new Set<Promise<void>>();
+  const reminderNotificationService = dependencies.reminderNotificationService ?? {
+    async configurePlatform() { throw new Error('Reminder notifications unavailable.'); },
+    async getPermissionStatus(): Promise<never> {
+      throw new Error('Reminder notifications unavailable.');
+    },
+    async requestPermission(): Promise<never> {
+      throw new Error('Reminder notifications unavailable.');
+    },
+    async listScheduled() { return []; },
+    async schedule() { throw new Error('Reminder notifications unavailable.'); },
+    async cancel() { throw new Error('Reminder notifications unavailable.'); },
+  };
   const childIdGenerator = sanitizeChildIdGenerator(dependencies.childIdGenerator);
   const feedingIdGenerator = sanitizeFeedingIdGenerator(
     dependencies.feedingIdGenerator,
@@ -562,6 +606,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       let diaperRepository: DiaperRepository;
       let growthRepository: GrowthRepository;
       let milestoneRepository: MilestoneRepository;
+      let reminderRepository: ReminderRepository;
 
       try {
         todayReadRepositories = dependencies.createTodayReadRepositories(database);
@@ -582,6 +627,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         );
         growthRepository = dependencies.createGrowthRepository(database);
         milestoneRepository = dependencies.createMilestoneRepository(database);
+        reminderRepository = dependencies.createReminderRepository(database);
         diaperRepository = sanitizeDiaperRepository(
           dependencies.createDiaperRepository(database),
         );
@@ -606,6 +652,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
         diaperRepository,
         growthRepository,
         milestoneRepository,
+        reminderRepository,
       };
       return initializedRuntime;
     })();
@@ -722,6 +769,54 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       return () => { selectionListeners.delete(listener); };
     },
   };
+
+  async function loadCanonicalReminderProjection(): Promise<readonly Reminder[]> {
+    return runSerializedDatabaseAccess(async () => {
+      const { childRepository, reminderRepository } = await initialize();
+      const nowEpochMs = readEpochClock();
+      const children = await childRepository.listChildren();
+      const remindersByChild: Reminder[][] = [];
+      for (const child of children) {
+        remindersByChild.push([...(await reminderRepository.listUpcomingByChild(
+          child.id,
+          nowEpochMs,
+          REMINDER_NOTIFICATION_PROJECTION_LIMIT,
+        )).items]);
+      }
+      return remindersByChild.flat()
+        .sort((left, right) => left.scheduledAtEpochMs - right.scheduledAtEpochMs ||
+          left.id.localeCompare(right.id))
+        .slice(0, REMINDER_NOTIFICATION_PROJECTION_LIMIT);
+    });
+  }
+
+  const reminderNotificationCoordinator = createReminderNotificationCoordinator({
+    service: reminderNotificationService,
+    loadCanonicalReminders: loadCanonicalReminderProjection,
+  });
+  const reminderNotifications: ReminderNotificationsRuntime = {
+    getPermissionStatus() {
+      return runOperation(async () => {
+        try { return await reminderNotificationService.getPermissionStatus(); }
+        catch { return 'unavailable'; }
+      });
+    },
+    requestPermission() {
+      return runOperation(async () => {
+        let permission: ReminderNotificationPermissionStatus;
+        try {
+          permission = await reminderNotificationService.requestPermission();
+        } catch {
+          return { permission: 'unavailable', reconciliation: null };
+        }
+        const reconciliation = await reminderNotificationCoordinator.reconcile();
+        return { permission, reconciliation };
+      });
+    },
+    reconcile() {
+      return runOperation(() => reminderNotificationCoordinator.reconcile());
+    },
+  };
   const growth = createGrowthRuntime({
     runOperation,
     withDatabaseQueue: runSerializedDatabaseAccess,
@@ -738,6 +833,46 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
     idGenerator: dependencies.milestoneIdGenerator,
     getCurrentCalendarDate: dependencies.getCurrentCalendarDate,
   });
+  const reminderCore = createReminderRuntime({
+    runOperation,
+    withDatabaseQueue: runSerializedDatabaseAccess,
+    initialize,
+    selection: activeChildSelection,
+    idGenerator: dependencies.reminderIdGenerator,
+    getCurrentEpochMs: readEpochClock,
+  });
+  function requestReminderNotificationReconciliation(): void {
+    void reminderNotifications.reconcile().catch(() => undefined);
+  }
+  async function afterReminderMutation<T>(operation: Promise<T>): Promise<T> {
+    try {
+      const result = await operation;
+      requestReminderNotificationReconciliation();
+      return result;
+    } catch (error) {
+      if (error instanceof ReminderRuntimeError && error.completedMutation !== undefined) {
+        requestReminderNotificationReconciliation();
+      }
+      throw error;
+    }
+  }
+  const reminders: ReminderRuntime = {
+    ...reminderCore,
+    async checkMutation(context, pending) {
+      const result = await reminderCore.checkMutation(context, pending);
+      if (result.value.status === 'success') requestReminderNotificationReconciliation();
+      return result;
+    },
+    record(context, values) {
+      return afterReminderMutation(reminderCore.record(context, values));
+    },
+    update(context, expected, values) {
+      return afterReminderMutation(reminderCore.update(context, expected, values));
+    },
+    delete(context, expected) {
+      return afterReminderMutation(reminderCore.delete(context, expected));
+    },
+  };
   const today = createTodayRuntime({
     subscribeSelectionChange: activeChildSelection.subscribe,
     runOperation,
@@ -1139,6 +1274,8 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
   return {
     growth,
     milestones,
+    reminders,
+    reminderNotifications,
     activeChildSelection,
     today,
     children,
@@ -1151,6 +1288,7 @@ export function createAppRuntime<TDatabase extends RuntimeDatabaseConnection>(
       }
 
       closed = true;
+      reminderNotificationCoordinator.close();
       selectionListeners.clear();
       const operationsToFinish = [...activeOperations];
 

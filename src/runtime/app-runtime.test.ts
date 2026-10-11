@@ -1,5 +1,8 @@
 import type { GrowthRepository } from '../features/growth/application/growth-repository';
 import type { MilestoneRepository } from '../features/milestones/application/milestone-repository';
+import type { ReminderRepository } from '../features/reminders/application/reminder-repository';
+import { createReminder, type Reminder } from '../features/reminders/domain/reminder';
+import type { ReminderNotificationService } from '../services/notifications/reminder-notification-service';
 import { getLocalDayContext } from '../features/today/data/local-day-context';
 import type { TodayReadRepositories } from '../features/today/application/get-today-summary';
 
@@ -46,6 +49,17 @@ function unusedGrowthRepository(): GrowthRepository {
 function unusedMilestoneRepository(): MilestoneRepository {
   const unused = async (): Promise<never> => { throw new Error('Milestones are unused in this fixture'); };
   return { create: unused, getById: unused, listHistory: unused, updateIfMatches: unused, deleteIfMatches: unused };
+}
+function unusedReminderRepository(): ReminderRepository {
+  const unused = async (): Promise<never> => { throw new Error('Reminders are unused in this fixture'); };
+  return {
+    create: unused,
+    getById: unused,
+    listByChild: unused,
+    listUpcomingByChild: unused,
+    updateIfMatches: unused,
+    deleteIfMatches: unused,
+  };
 }
 class FakeDatabase implements RuntimeDatabaseConnection {
   readonly closeAsync = vi.fn(async () => undefined);
@@ -159,6 +173,61 @@ class FakeDiaperRepository implements DiaperRepository {
   });
 }
 
+function memoryReminderRepository(initial: readonly Reminder[] = []): ReminderRepository {
+  const items = new Map(initial.map((item) => [item.id, item]));
+  return {
+    create: vi.fn(async (item) => { items.set(item.id, item); }),
+    getById: vi.fn(async (childId, id) => {
+      const item = items.get(id);
+      return item !== undefined && item.childId === childId ? item : null;
+    }),
+    listByChild: vi.fn(async (childId, limit) => ({
+      items: [...items.values()].filter((item) => item.childId === childId).slice(0, limit),
+      nextCursor: null,
+    })),
+    listUpcomingByChild: vi.fn(async (childId, afterEpochMs, limit) => ({
+      items: [...items.values()]
+        .filter((item) => item.childId === childId && item.scheduledAtEpochMs > afterEpochMs)
+        .sort((left, right) => left.scheduledAtEpochMs - right.scheduledAtEpochMs ||
+          left.id.localeCompare(right.id))
+        .slice(0, limit),
+      nextCursor: null,
+    })),
+    updateIfMatches: vi.fn(async (expected, replacement) => {
+      const item = items.get(expected.id);
+      if (item === undefined || item.childId !== expected.childId ||
+        item.revision !== expected.revision) return false;
+      items.set(replacement.id, replacement);
+      return true;
+    }),
+    deleteIfMatches: vi.fn(async (expected) => {
+      const item = items.get(expected.id);
+      if (item === undefined || item.childId !== expected.childId ||
+        item.revision !== expected.revision) return false;
+      return items.delete(expected.id);
+    }),
+  };
+}
+
+function fakeReminderNotificationService(): ReminderNotificationService & {
+  scheduled: Map<string, number>;
+} {
+  const scheduled = new Map<string, number>();
+  return {
+    scheduled,
+    configurePlatform: vi.fn(async () => undefined),
+    getPermissionStatus: vi.fn(async () => 'authorized' as const),
+    requestPermission: vi.fn(async () => 'authorized' as const),
+    listScheduled: vi.fn(async () => [...scheduled].map(([reminderId, scheduledAtEpochMs]) => ({
+      identifier: `mybaby.reminder.v1.${reminderId}`, reminderId, scheduledAtEpochMs,
+    }))),
+    schedule: vi.fn(async (reminderId, scheduledAtEpochMs) => {
+      scheduled.set(reminderId, scheduledAtEpochMs);
+    }),
+    cancel: vi.fn(async (reminderId) => { scheduled.delete(reminderId); }),
+  };
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -175,6 +244,8 @@ function createRuntimeFixture(options?: {
   getCurrentCalendarDate?: () => CalendarDate;
   getCurrentEpochMs?: () => number;
   feedingIdGenerator?: { generate(): string };
+  reminderRepository?: ReminderRepository;
+  reminderNotificationService?: ReminderNotificationService;
 }) {
   const database = new FakeDatabase();
   const activeChildRepository = new FakeActiveChildRepository();
@@ -197,6 +268,8 @@ function createRuntimeFixture(options?: {
     createSleepRepository: () => sleepRepository,
     createGrowthRepository: unusedGrowthRepository,
     createMilestoneRepository: unusedMilestoneRepository,
+    createReminderRepository: () => options?.reminderRepository ?? unusedReminderRepository(),
+    reminderNotificationService: options?.reminderNotificationService,
     createDiaperRepository: () => diaperRepository,
     childIdGenerator: { generate: () => 'generated-child-id' },
     feedingIdGenerator:
@@ -204,6 +277,7 @@ function createRuntimeFixture(options?: {
     sleepIdGenerator: { generate: () => 'generated-sleep-id' },
     growthIdGenerator: { generate: () => 'generated-growth-id' },
     milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
+    reminderIdGenerator: { generate: () => 'generated-reminder-id' },
     diaperIdGenerator: { generate: () => 'generated-diaper-id' },
     getCurrentCalendarDate: options?.getCurrentCalendarDate ?? (() => asOf),
     getCurrentEpochMs:
@@ -398,12 +472,14 @@ describe('application runtime', () => {
       createSleepRepository: () => new FakeSleepRepository(),
       createGrowthRepository: unusedGrowthRepository,
       createMilestoneRepository: unusedMilestoneRepository,
+      createReminderRepository: unusedReminderRepository,
       createDiaperRepository: () => new FakeDiaperRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       sleepIdGenerator: { generate: () => 'generated-sleep-id' },
       growthIdGenerator: { generate: () => 'generated-growth-id' },
       milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
+      reminderIdGenerator: { generate: () => 'generated-reminder-id' },
       diaperIdGenerator: { generate: () => 'generated-diaper-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
@@ -432,12 +508,14 @@ describe('application runtime', () => {
       createSleepRepository: () => new FakeSleepRepository(),
       createGrowthRepository: unusedGrowthRepository,
       createMilestoneRepository: unusedMilestoneRepository,
+      createReminderRepository: unusedReminderRepository,
       createDiaperRepository: () => new FakeDiaperRepository(),
       childIdGenerator: { generate: () => 'generated-child-id' },
       feedingIdGenerator: { generate: () => 'generated-feeding-id' },
       sleepIdGenerator: { generate: () => 'generated-sleep-id' },
       growthIdGenerator: { generate: () => 'generated-growth-id' },
       milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
+      reminderIdGenerator: { generate: () => 'generated-reminder-id' },
       diaperIdGenerator: { generate: () => 'generated-diaper-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
@@ -524,6 +602,7 @@ describe('application runtime', () => {
       createSleepRepository: () => new FakeSleepRepository(),
       createGrowthRepository: unusedGrowthRepository,
       createMilestoneRepository: unusedMilestoneRepository,
+      createReminderRepository: unusedReminderRepository,
       createDiaperRepository: () => new FakeDiaperRepository(),
       childIdGenerator: {
         generate: () => {
@@ -534,6 +613,7 @@ describe('application runtime', () => {
       sleepIdGenerator: { generate: () => 'generated-sleep-id' },
       growthIdGenerator: { generate: () => 'generated-growth-id' },
       milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
+      reminderIdGenerator: { generate: () => 'generated-reminder-id' },
       diaperIdGenerator: { generate: () => 'generated-diaper-id' },
       getCurrentCalendarDate: () => asOf,
       getCurrentEpochMs: () => 1_765_000_000_123,
@@ -1801,6 +1881,166 @@ describe('sleep runtime boundary', () => {
     finish.resolve();
     await expect(diaper).rejects.toMatchObject({ code: 'diaper-not-saved' });
     await expect(feeding).resolves.toMatchObject({ kind: 'bottle' });
+  });
+});
+
+describe('Reminder notification application runtime', () => {
+  const now = 1_765_000_000_123;
+  const childA: Child = {
+    id: 'child-a', displayName: 'Mio', dateOfBirth: createCalendarDate('2025-01-01'),
+  };
+  const childB: Child = {
+    id: 'child-b', displayName: 'Mira', dateOfBirth: createCalendarDate('2025-02-01'),
+  };
+
+  it('builds one globally ordered projection across every child, independent of selection', async () => {
+    const reminders = [
+      createReminder({
+        id: 'b', childId: childB.id, title: 'B', scheduledAtEpochMs: now + 1_000, revision: 1,
+      }),
+      createReminder({
+        id: 'a', childId: childA.id, title: 'A', scheduledAtEpochMs: now + 2_000, revision: 1,
+      }),
+    ];
+    const repository = memoryReminderRepository(reminders);
+    const service = fakeReminderNotificationService();
+    const fixture = createRuntimeFixture({
+      reminderRepository: repository,
+      reminderNotificationService: service,
+    });
+    fixture.childRepository.children.set(childA.id, childA);
+    fixture.childRepository.children.set(childB.id, childB);
+    fixture.activeChildRepository.activeChildId = childA.id;
+
+    await expect(fixture.runtime.reminderNotifications.reconcile()).resolves.toMatchObject({
+      status: 'synchronized', desiredCount: 2, scheduledCount: 2,
+    });
+    expect(repository.listUpcomingByChild).toHaveBeenCalledWith(childA.id, now, 50);
+    expect(repository.listUpcomingByChild).toHaveBeenCalledWith(childB.id, now, 50);
+    expect(vi.mocked(service.schedule).mock.calls.map(([id]) => id)).toEqual(['b', 'a']);
+  });
+
+  it('releases the SQLite queue before any notification OS work', async () => {
+    const repository = memoryReminderRepository();
+    const service = fakeReminderNotificationService();
+    const osInspection = createDeferred<readonly []>();
+    vi.mocked(service.listScheduled)
+      .mockImplementationOnce(() => osInspection.promise)
+      .mockResolvedValue([]);
+    const fixture = createRuntimeFixture({
+      reminderRepository: repository,
+      reminderNotificationService: service,
+    });
+    fixture.childRepository.children.set(childA.id, childA);
+    fixture.activeChildRepository.activeChildId = childA.id;
+
+    const reconciliation = fixture.runtime.reminderNotifications.reconcile();
+    await vi.waitFor(() => expect(service.listScheduled).toHaveBeenCalledOnce());
+    const feeding = fixture.runtime.feeding.recordFeeding({
+      kind: 'bottle', amountMl: 10, contents: 'formula',
+    });
+    await expect(feeding).resolves.toMatchObject({ childId: childA.id });
+    expect(fixture.feedingRepository.save).toHaveBeenCalledOnce();
+    osInspection.resolve([]);
+    await expect(reconciliation).resolves.toMatchObject({ status: 'synchronized' });
+  });
+
+  it('requests permission only explicitly and reconciles after confirmed reminder writes', async () => {
+    const repository = memoryReminderRepository();
+    const service = fakeReminderNotificationService();
+    const fixture = createRuntimeFixture({
+      reminderRepository: repository,
+      reminderNotificationService: service,
+    });
+    fixture.childRepository.children.set(childA.id, childA);
+    fixture.activeChildRepository.activeChildId = childA.id;
+    expect(service.requestPermission).not.toHaveBeenCalled();
+
+    const context = {
+      childId: childA.id,
+      selectionVersion: fixture.runtime.activeChildSelection.getVersion(),
+      selectionScope: fixture.runtime.activeChildSelection.scope,
+    };
+    await expect(fixture.runtime.reminders.record(context, {
+      title: 'Privat titel', scheduledAtEpochMs: now + 10_000,
+    })).resolves.toMatchObject({ value: { id: 'generated-reminder-id' } });
+    await vi.waitFor(() => expect(service.schedule).toHaveBeenCalledWith(
+      'generated-reminder-id', now + 10_000,
+    ));
+    expect(service.requestPermission).not.toHaveBeenCalled();
+
+    await expect(fixture.runtime.reminderNotifications.requestPermission()).resolves
+      .toMatchObject({ permission: 'authorized', reconciliation: { status: 'synchronized' } });
+    expect(service.requestPermission).toHaveBeenCalledOnce();
+  });
+
+  it('does not let notification failures roll back or fail a confirmed Reminder mutation', async () => {
+    const repository = memoryReminderRepository();
+    const service = fakeReminderNotificationService();
+    vi.mocked(service.schedule).mockRejectedValue(new Error('native unavailable'));
+    const fixture = createRuntimeFixture({
+      reminderRepository: repository,
+      reminderNotificationService: service,
+    });
+    fixture.childRepository.children.set(childA.id, childA);
+    fixture.activeChildRepository.activeChildId = childA.id;
+    const context = {
+      childId: childA.id,
+      selectionVersion: 0,
+      selectionScope: fixture.runtime.activeChildSelection.scope,
+    };
+    const result = await fixture.runtime.reminders.record(context, {
+      title: 'Sparad trots OS-fel', scheduledAtEpochMs: now + 10_000,
+    });
+    expect(result.value.title).toBe('Sparad trots OS-fel');
+    await vi.waitFor(() => expect(service.schedule).toHaveBeenCalled());
+    await expect(repository.getById(childA.id, result.value.id)).resolves.toEqual(result.value);
+  });
+
+  it('does not project an unresolved or not-applied database mutation', async () => {
+    const repository = memoryReminderRepository();
+    vi.mocked(repository.create).mockRejectedValueOnce(new Error('ambiguous database failure'));
+    const service = fakeReminderNotificationService();
+    const fixture = createRuntimeFixture({
+      reminderRepository: repository,
+      reminderNotificationService: service,
+    });
+    fixture.childRepository.children.set(childA.id, childA);
+    fixture.activeChildRepository.activeChildId = childA.id;
+    const context = {
+      childId: childA.id,
+      selectionVersion: 0,
+      selectionScope: fixture.runtime.activeChildSelection.scope,
+    };
+    await expect(fixture.runtime.reminders.record(context, {
+      title: 'Osäker', scheduledAtEpochMs: now + 10_000,
+    })).rejects.toMatchObject({ code: 'create-not-saved' });
+    await Promise.resolve();
+    expect(service.configurePlatform).not.toHaveBeenCalled();
+    expect(service.schedule).not.toHaveBeenCalled();
+  });
+
+  it('stops pending reconciliation safely during shutdown and never reopens', async () => {
+    const pending = createDeferred<Readonly<{ items: readonly Reminder[]; nextCursor: null }>>();
+    const repository = memoryReminderRepository();
+    vi.mocked(repository.listUpcomingByChild).mockImplementationOnce(() => pending.promise);
+    const service = fakeReminderNotificationService();
+    const fixture = createRuntimeFixture({
+      reminderRepository: repository,
+      reminderNotificationService: service,
+    });
+    fixture.childRepository.children.set(childA.id, childA);
+    const reconciliation = fixture.runtime.reminderNotifications.reconcile();
+    await vi.waitFor(() => expect(repository.listUpcomingByChild).toHaveBeenCalledOnce());
+    const closing = fixture.runtime.close();
+    expect(fixture.database.closeAsync).not.toHaveBeenCalled();
+    pending.resolve({ items: [], nextCursor: null });
+    await expect(reconciliation).resolves.toMatchObject({ status: 'closed' });
+    await closing;
+    expect(service.configurePlatform).not.toHaveBeenCalled();
+    expect(fixture.database.closeAsync).toHaveBeenCalledOnce();
+    await expect(fixture.runtime.reminderNotifications.reconcile()).rejects
+      .toEqual(new AppRuntimeError('runtime-closed'));
   });
 });
 

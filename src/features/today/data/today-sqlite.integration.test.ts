@@ -1,5 +1,6 @@
 import { SqliteGrowthRepository } from '../../growth/data/sqlite-growth-repository';
 import { SqliteMilestoneRepository } from '../../milestones/data/sqlite-milestone-repository';
+import { SqliteReminderRepository } from '../../reminders/data/sqlite-reminder-repository';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -76,6 +77,7 @@ beforeEach(async () => {
     createSleepRepository: (connection) => new SqliteSleepRepository(connection),
     createGrowthRepository: (connection) => new SqliteGrowthRepository(connection),
     createMilestoneRepository: (connection) => new SqliteMilestoneRepository(connection),
+    createReminderRepository: (connection) => new SqliteReminderRepository(connection),
     createDiaperRepository: (connection) => new SqliteDiaperRepository(connection),
     createTodayReadRepositories(connection) {
       readers = {
@@ -93,6 +95,7 @@ beforeEach(async () => {
     sleepIdGenerator: { generate: () => 'sleep-' + ++generated },
     growthIdGenerator: { generate: () => 'generated-growth-id' },
     milestoneIdGenerator: { generate: () => 'generated-milestone-id' },
+    reminderIdGenerator: { generate: () => 'generated-reminder-id' },
     diaperIdGenerator: { generate: () => 'diaper-' + ++generated },
   });
 });
@@ -106,7 +109,7 @@ async function summary() {
   return result.summary;
 }
 
-describe('Today real schema-v6 SQLite/runtime integration', () => {
+describe('Today current SQLite schema/runtime integration', () => {
   it('reads empty data without schema changes or persistent totals', async () => {
     const before = db.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY name").all();
     const result = await summary();
@@ -115,7 +118,7 @@ describe('Today real schema-v6 SQLite/runtime integration', () => {
     expect(result.feeding).toEqual({ dayCount: 0, latestCompletedAtEpochMs: null });
     expect(result.diapers).toEqual({ dayCount: 0, latestOccurredAtEpochMs: null });
     expect(result.sleep).toEqual({ completedDurationMs: 0, active: null });
-    expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
+    expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 });
     expect(db.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
   });
 

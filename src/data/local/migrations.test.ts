@@ -78,10 +78,10 @@ describe('local database migrations', () => {
     await migrateLocalDatabase(database);
 
     expect(database.userVersion).toBe(LATEST_LOCAL_DATABASE_VERSION);
-    expect(database.transactionCount).toBe(8);
-    expect(database.committedTransactionCount).toBe(8);
+    expect(database.transactionCount).toBe(9);
+    expect(database.committedTransactionCount).toBe(9);
     expect(database.rolledBackTransactionCount).toBe(0);
-    expect(database.executedStatements).toHaveLength(32);
+    expect(database.executedStatements).toHaveLength(36);
     expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
     expect(database.executedStatements[1]).toContain('CREATE TABLE children');
     expect(database.executedStatements[1]).toContain('id TEXT PRIMARY KEY NOT NULL');
@@ -129,6 +129,11 @@ describe('local database migrations', () => {
     expect(database.executedStatements[29]).toContain('CREATE INDEX milestone_entries_child_date_id_idx');
     expect(database.executedStatements[30]).toBe('PRAGMA user_version = 8;');
     expect(database.executedStatements[31]).toBe('COMMIT;');
+    expect(database.executedStatements[32]).toBe('BEGIN IMMEDIATE;');
+    expect(database.executedStatements[33]).toContain('CREATE TABLE reminders');
+    expect(database.executedStatements[33]).toContain('CREATE INDEX reminders_child_scheduled_id_idx');
+    expect(database.executedStatements[34]).toBe('PRAGMA user_version = 9;');
+    expect(database.executedStatements[35]).toBe('COMMIT;');
   });
 
   it('migrates version 1 through version 3 without selecting an existing child', async () => {
@@ -136,9 +141,9 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(8);
-    expect(database.transactionCount).toBe(7);
-    expect(database.executedStatements).toHaveLength(28);
+    expect(database.userVersion).toBe(9);
+    expect(database.transactionCount).toBe(8);
+    expect(database.executedStatements).toHaveLength(32);
     expect(database.executedStatements[0]).toBe('BEGIN IMMEDIATE;');
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE active_child_selection');
@@ -178,8 +183,8 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(8);
-    expect(database.transactionCount).toBe(6);
+    expect(database.userVersion).toBe(9);
+    expect(database.transactionCount).toBe(7);
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE feeding_events');
     expect(schema).toContain('FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE');
@@ -211,8 +216,8 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(8);
-    expect(database.transactionCount).toBe(5);
+    expect(database.userVersion).toBe(9);
+    expect(database.transactionCount).toBe(6);
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE breastfeeding_timer_session');
     expect(schema).toContain('id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1)');
@@ -233,8 +238,8 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(8);
-    expect(database.transactionCount).toBe(4);
+    expect(database.userVersion).toBe(9);
+    expect(database.transactionCount).toBe(5);
     const schema = database.executedStatements[1];
     expect(schema).toContain('CREATE TABLE sleep_events');
     expect(schema).toContain('CREATE TABLE active_sleep_sessions');
@@ -256,8 +261,8 @@ describe('local database migrations', () => {
     await migrateLocalDatabase(database);
 
     const schema = database.executedStatements[1]!;
-    expect(database.userVersion).toBe(8);
-    expect(database.transactionCount).toBe(3);
+    expect(database.userVersion).toBe(9);
+    expect(database.transactionCount).toBe(4);
     expect(schema).toContain('CREATE TABLE diaper_events');
     expect(schema).toContain("kind TEXT NOT NULL CHECK (kind IN ('wet', 'dirty', 'mixed'))");
     expect(schema).toContain('FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE');
@@ -272,29 +277,45 @@ describe('local database migrations', () => {
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(8);
-    expect(database.transactionCount).toBe(2);
+    expect(database.userVersion).toBe(9);
+    expect(database.transactionCount).toBe(3);
     expect(database.executedStatements[1]).toContain('CREATE TABLE growth_measurements');
     expect(database.executedStatements[5]).toContain('CREATE TABLE milestone_entries');
   });
 
-  it('migrates version 7 to version 8 with only the Milestone schema', async () => {
+  it('migrates version 7 through Milestones and Reminders', async () => {
     const database = new FakeMigrationDatabase(7);
 
     await migrateLocalDatabase(database);
 
-    expect(database.userVersion).toBe(8);
-    expect(database.transactionCount).toBe(1);
-    expect(database.executedStatements).toHaveLength(4);
+    expect(database.userVersion).toBe(9);
+    expect(database.transactionCount).toBe(2);
+    expect(database.executedStatements).toHaveLength(8);
     expect(database.executedStatements[1]).toContain('CREATE TABLE milestone_entries');
     expect(database.executedStatements[1]).toContain(
       'ON milestone_entries (child_id, occurred_on DESC, id DESC)',
     );
     expect(database.executedStatements[1]).not.toMatch(/\bINSERT\b/i);
+    expect(database.executedStatements[5]).toContain('CREATE TABLE reminders');
   });
 
-  it('does nothing when the database is already at version 8', async () => {
+  it('migrates version 8 to version 9 with only the Reminder schema', async () => {
     const database = new FakeMigrationDatabase(8);
+
+    await migrateLocalDatabase(database);
+
+    expect(database.userVersion).toBe(9);
+    expect(database.transactionCount).toBe(1);
+    expect(database.executedStatements).toHaveLength(4);
+    expect(database.executedStatements[1]).toContain('CREATE TABLE reminders');
+    expect(database.executedStatements[1]).toContain(
+      'ON reminders (child_id, scheduled_at_epoch_ms ASC, id ASC)',
+    );
+    expect(database.executedStatements[1]).not.toMatch(/\bINSERT\b/i);
+  });
+
+  it('does nothing when the database is already at version 9', async () => {
+    const database = new FakeMigrationDatabase(9);
 
     await migrateLocalDatabase(database);
 
@@ -303,7 +324,7 @@ describe('local database migrations', () => {
   });
 
   it('rejects a schema version newer than the app supports', async () => {
-    const database = new FakeMigrationDatabase(9);
+    const database = new FakeMigrationDatabase(10);
 
     await expect(migrateLocalDatabase(database)).rejects.toMatchObject({
       code: 'unsupported-database-version',

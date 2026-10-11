@@ -2,6 +2,12 @@ import { SqliteGrowthRepository } from '../features/growth/data/sqlite-growth-re
 import { ExpoGrowthIdGenerator } from '../features/growth/data/expo-growth-id-generator';
 import { SqliteMilestoneRepository } from '../features/milestones/data/sqlite-milestone-repository';
 import { ExpoMilestoneIdGenerator } from '../features/milestones/data/expo-milestone-id-generator';
+import { SqliteReminderRepository } from '../features/reminders/data/sqlite-reminder-repository';
+import { ExpoReminderIdGenerator } from '../features/reminders/data/expo-reminder-id-generator';
+import {
+  ExpoReminderNotificationService,
+  registerReminderNotificationForegroundHandler,
+} from '../services/notifications/expo-reminder-notification-service';
 import { getLocalDayContext } from '../features/today/data/local-day-context';
 import { openLocalDatabase } from '../data/local/open-local-database';
 import { ExpoChildIdGenerator } from '../features/children/data/expo-child-id-generator';
@@ -18,6 +24,8 @@ import { SqliteDiaperRepository } from '../features/diapers/data/sqlite-diaper-r
 
 import { createAppRuntime, type AppRuntime } from './app-runtime';
 
+registerReminderNotificationForegroundHandler();
+
 export function createProductionAppRuntime(): AppRuntime {
   return createAppRuntime({
     openDatabase: openLocalDatabase,
@@ -30,12 +38,15 @@ export function createProductionAppRuntime(): AppRuntime {
     createSleepRepository: (database) => new SqliteSleepRepository(database),
     createGrowthRepository: (database) => new SqliteGrowthRepository(database),
     createMilestoneRepository: (database) => new SqliteMilestoneRepository(database),
+    createReminderRepository: (database) => new SqliteReminderRepository(database),
+    reminderNotificationService: new ExpoReminderNotificationService(),
     createDiaperRepository: (database) => new SqliteDiaperRepository(database),
     childIdGenerator: new ExpoChildIdGenerator(),
     feedingIdGenerator: new ExpoFeedingIdGenerator(),
     sleepIdGenerator: new ExpoSleepIdGenerator(),
     growthIdGenerator: new ExpoGrowthIdGenerator(),
     milestoneIdGenerator: new ExpoMilestoneIdGenerator(),
+    reminderIdGenerator: new ExpoReminderIdGenerator(),
     diaperIdGenerator: new ExpoDiaperIdGenerator(),
     getCurrentCalendarDate: getCurrentLocalCalendarDate,
     getCurrentEpochMs: Date.now,

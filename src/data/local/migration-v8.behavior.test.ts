@@ -33,6 +33,7 @@ function snapshot(database: DatabaseSync) {
 async function populatedV7(): Promise<DatabaseSync> {
   const database = await createMigratedTestDatabase();
   database.exec(`
+    DROP TABLE reminders;
     DROP TABLE milestone_entries;
     PRAGMA user_version = 7;
     INSERT INTO children VALUES ('child', 'Mio', '2024-01-01');
@@ -59,7 +60,7 @@ describe('Milestone migration v8', () => {
   it('creates the constrained table and deterministic history index on a fresh database', async () => {
     const database = await createMigratedTestDatabase();
     try {
-      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
+      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 });
       expect(database.prepare(
         "SELECT name FROM sqlite_master WHERE name = 'milestone_entries_child_date_id_idx'",
       ).get()).toEqual({ name: 'milestone_entries_child_date_id_idx' });
@@ -93,9 +94,10 @@ describe('Milestone migration v8', () => {
       expect(snapshot(database)).toEqual(records);
       expect(database.prepare(
         "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'milestone_entries%' " +
-          "AND name NOT LIKE 'sqlite_autoindex_milestone_entries%' ORDER BY name",
+          "AND name NOT LIKE 'sqlite_autoindex_milestone_entries%' " +
+          "AND name NOT LIKE 'reminders%' AND name NOT LIKE 'sqlite_autoindex_reminders%' ORDER BY name",
       ).all()).toEqual(schema);
-      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
+      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 });
     } finally { database.close(); }
   });
 
@@ -124,12 +126,12 @@ describe('Milestone migration v8', () => {
         "SELECT name FROM sqlite_master WHERE name LIKE '%milestone_entries%'",
       ).all()).toEqual([]);
       await migrateLocalDatabase(adapter(database));
-      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
+      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 });
     } finally { database.close(); }
   });
 
-  it('reopens a file-backed v8 database without rerunning migrations or changing rows', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'mybaby-milestones-v8-'));
+  it('reopens a file-backed current database without rerunning migrations or changing rows', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mybaby-current-schema-'));
     const path = join(directory, 'test.db');
     let database: DatabaseSync | null = new DatabaseSync(path);
     try {

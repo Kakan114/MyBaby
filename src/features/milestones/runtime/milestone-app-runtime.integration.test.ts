@@ -16,6 +16,7 @@ import { SqliteDiaperRepository } from '../../diapers/data/sqlite-diaper-reposit
 import { SqliteSleepRepository } from '../../sleep/data/sqlite-sleep-repository';
 import { getLocalDayContext } from '../../today/data/local-day-context';
 import { SqliteMilestoneRepository } from '../data/sqlite-milestone-repository';
+import { SqliteReminderRepository } from '../../reminders/data/sqlite-reminder-repository';
 
 const today = createCalendarDate('2026-10-08');
 const values = {
@@ -85,11 +86,13 @@ function composition(
     createDiaperRepository: (db) => new SqliteDiaperRepository(db),
     createGrowthRepository: (db) => new SqliteGrowthRepository(db),
     createMilestoneRepository,
+    createReminderRepository: (db) => new SqliteReminderRepository(db),
     createTodayReadRepositories: () => readers,
     getCurrentCalendarDate: () => today,
     getCurrentEpochMs: () => Date.parse('2026-10-08T12:00:00Z'),
     getLocalDayContext,
     milestoneIdGenerator: { generate: () => `milestone-${++milestoneId}` },
+    reminderIdGenerator: { generate: () => `reminder-${++milestoneId}` },
     growthIdGenerator: { generate: () => 'growth-id' },
     childIdGenerator: { generate: () => 'child-id' },
     feedingIdGenerator: { generate: () => 'feeding-id' },
@@ -112,7 +115,7 @@ async function fixture() {
   return { database, ...composition(database) };
 }
 
-describe('Milestones through shared AppRuntime and real schema-v8 SQLite', () => {
+describe('Milestones through shared AppRuntime and current SQLite schema', () => {
   it('creates, reads, pages, updates, deletes, and isolates children', async () => {
     const f = await fixture();
     try {
@@ -154,7 +157,7 @@ describe('Milestones through shared AppRuntime and real schema-v8 SQLite', () =>
         .toEqual([second]);
       expect(f.createMilestoneRepository).toHaveBeenCalledOnce();
       expect(f.createMilestoneRepository).toHaveBeenCalledWith(f.connection);
-      expect(f.database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
+      expect(f.database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 9 });
     } finally { await f.runtime.close(); f.database.close(); }
   });
 

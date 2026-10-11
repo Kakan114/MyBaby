@@ -2,6 +2,7 @@
 
 import type { GrowthRuntime } from '../features/growth/runtime/create-growth-runtime';
 import type { MilestoneRuntime } from '../features/milestones/runtime/create-milestone-runtime';
+import type { ReminderRuntime } from '../features/reminders/runtime/create-reminder-runtime';
 import type { ActiveChildSelection } from './active-child-selection';
 import {
   createContext,
@@ -10,13 +11,16 @@ import {
   useEffect,
   useState,
 } from 'react';
+import { AppState } from 'react-native';
 
 import type { TodayRuntime } from '../features/today/runtime/create-today-runtime';
 import type { ChildrenRuntime, DiaperRuntime, FeedingRuntime, SleepRuntime } from './app-runtime';
 import { createProductionAppRuntime } from './create-production-app-runtime';
+import { startReminderNotificationLifecycle } from './reminder-notification-lifecycle';
 
 const GrowthRuntimeContext = createContext<Readonly<{ growth: GrowthRuntime; selection: ActiveChildSelection }> | null>(null);
 const MilestoneRuntimeContext = createContext<Readonly<{ milestones: MilestoneRuntime; selection: ActiveChildSelection }> | null>(null);
+const ReminderRuntimeContext = createContext<Readonly<{ reminders: ReminderRuntime; selection: ActiveChildSelection }> | null>(null);
 
 const TodayRuntimeContext = createContext<TodayRuntime | null>(null);
 
@@ -28,14 +32,19 @@ const DiaperRuntimeContext = createContext<DiaperRuntime | null>(null);
 export function AppRuntimeProvider({ children }: PropsWithChildren) {
   const [runtime] = useState(createProductionAppRuntime);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const stopNotificationLifecycle = startReminderNotificationLifecycle(
+      runtime.reminderNotifications,
+      AppState,
+    );
+    return () => {
+      stopNotificationLifecycle();
       void runtime.close().catch(() => undefined);
-    },
-    [runtime],
-  );
+    };
+  }, [runtime]);
 
   return (
+    <ReminderRuntimeContext.Provider value={{ reminders: runtime.reminders, selection: runtime.activeChildSelection }}>
     <MilestoneRuntimeContext.Provider value={{ milestones: runtime.milestones, selection: runtime.activeChildSelection }}>
       <GrowthRuntimeContext.Provider value={{ growth: runtime.growth, selection: runtime.activeChildSelection }}>
       <TodayRuntimeContext.Provider value={runtime.today}>
@@ -51,6 +60,7 @@ export function AppRuntimeProvider({ children }: PropsWithChildren) {
       </TodayRuntimeContext.Provider>
       </GrowthRuntimeContext.Provider>
     </MilestoneRuntimeContext.Provider>
+    </ReminderRuntimeContext.Provider>
   );
 }
 
@@ -105,5 +115,11 @@ export function useGrowthRuntime() {
 export function useMilestoneRuntime() {
   const runtime = useContext(MilestoneRuntimeContext);
   if (runtime === null) throw new Error('useMilestoneRuntime must be used within AppRuntimeProvider.');
+  return runtime;
+}
+
+export function useReminderRuntime() {
+  const runtime = useContext(ReminderRuntimeContext);
+  if (runtime === null) throw new Error('useReminderRuntime must be used within AppRuntimeProvider.');
   return runtime;
 }

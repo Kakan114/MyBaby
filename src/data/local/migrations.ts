@@ -1,4 +1,4 @@
-export const LATEST_LOCAL_DATABASE_VERSION = 8;
+export const LATEST_LOCAL_DATABASE_VERSION = 9;
 
 export interface LocalMigrationTransaction {
   execAsync(source: string): Promise<void>;
@@ -276,6 +276,35 @@ const migrations: readonly Migration[] = [
 
       CREATE INDEX milestone_entries_child_date_id_idx
         ON milestone_entries (child_id, occurred_on DESC, id DESC);
+    `);
+  },
+  async (transaction) => {
+    await transaction.execAsync(`
+      CREATE TABLE reminders (
+        id TEXT PRIMARY KEY NOT NULL CHECK (
+          typeof(id) = 'text' AND length(trim(id)) > 0
+        ),
+        child_id TEXT NOT NULL CHECK (
+          typeof(child_id) = 'text' AND length(trim(child_id)) > 0
+        ),
+        title TEXT NOT NULL CHECK (
+          typeof(title) = 'text'
+          AND title = trim(title)
+          AND length(title) BETWEEN 1 AND 100
+        ),
+        scheduled_at_epoch_ms INTEGER NOT NULL CHECK (
+          typeof(scheduled_at_epoch_ms) = 'integer'
+          AND scheduled_at_epoch_ms BETWEEN -8640000000000000 AND 8640000000000000
+        ),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (
+          typeof(revision) = 'integer'
+          AND revision BETWEEN 1 AND 9007199254740991
+        ),
+        FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX reminders_child_scheduled_id_idx
+        ON reminders (child_id, scheduled_at_epoch_ms ASC, id ASC);
     `);
   },
 ];
