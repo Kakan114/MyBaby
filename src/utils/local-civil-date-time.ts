@@ -28,7 +28,7 @@ export function assertCivilDate(value: CivilDate): void {
   ) throw new Error('Invalid civil date.');
 }
 
-function assertCivilTime(value: CivilTime): void {
+export function assertCivilTime(value: CivilTime): void {
   if (
     !Number.isInteger(value.hour) || value.hour < 0 || value.hour > 23 ||
     !Number.isInteger(value.minute) || value.minute < 0 || value.minute > 59

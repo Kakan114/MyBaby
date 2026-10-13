@@ -57,6 +57,7 @@ function unusedReminderRepository(): ReminderRepository {
     getById: unused,
     listByChild: unused,
     listUpcomingByChild: unused,
+    listPastByChild: unused,
     updateIfMatches: unused,
     deleteIfMatches: unused,
   };
@@ -190,6 +191,14 @@ function memoryReminderRepository(initial: readonly Reminder[] = []): ReminderRe
         .filter((item) => item.childId === childId && item.scheduledAtEpochMs > afterEpochMs)
         .sort((left, right) => left.scheduledAtEpochMs - right.scheduledAtEpochMs ||
           left.id.localeCompare(right.id))
+        .slice(0, limit),
+      nextCursor: null,
+    })),
+    listPastByChild: vi.fn(async (childId, atOrBeforeEpochMs, limit) => ({
+      items: [...items.values()]
+        .filter((item) => item.childId === childId && item.scheduledAtEpochMs <= atOrBeforeEpochMs)
+        .sort((left, right) => right.scheduledAtEpochMs - left.scheduledAtEpochMs ||
+          right.id.localeCompare(left.id))
         .slice(0, limit),
       nextCursor: null,
     })),

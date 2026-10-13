@@ -6,6 +6,8 @@ import {
   deleteReminder,
   readReminderById,
   readReminderList,
+  readPastReminders,
+  readUpcomingReminders,
   recordReminder,
   ReminderApplicationError,
   updateReminder,
@@ -28,9 +30,21 @@ export type CompletedReminderMutation = Readonly<{
   reminder: Reminder;
 }>;
 
+const reminderListCursorBrand: unique symbol = Symbol('ReminderListCursor');
+
+/** Opaque, runtime-issued cursor. Its child and captured clock boundary are not presentation input. */
+export type ReminderListCursor = Readonly<{
+  [reminderListCursorBrand]: true;
+}>;
+
+export type ReminderListPage = Readonly<{
+  items: readonly Reminder[];
+  nextCursor: ReminderListCursor | null;
+}>;
+
 export class ReminderRuntimeError extends Error {
   constructor(
-    readonly code: 'active-child-required' | 'stale-child-context',
+    readonly code: 'active-child-required' | 'stale-child-context' | 'invalid-pagination-cursor',
     readonly completedMutation?: CompletedReminderMutation,
   ) {
     super('The reminder child context is not available.');
@@ -48,6 +62,14 @@ export type ReminderRuntime = Readonly<{
     limit?: number,
     before?: ReminderCursor | null,
   ): Promise<ReminderSnapshot<ReminderPage>>;
+  getUpcoming(
+    limit?: number,
+    cursor?: ReminderListCursor | null,
+  ): Promise<ReminderSnapshot<ReminderListPage>>;
+  getPast(
+    limit?: number,
+    cursor?: ReminderListCursor | null,
+  ): Promise<ReminderSnapshot<ReminderListPage>>;
   getById(context: ActiveChildContext, id: string): Promise<ReminderSnapshot<Reminder | null>>;
   record(context: ActiveChildContext, values: ReminderValues): Promise<ReminderSnapshot<Reminder>>;
   update(
@@ -68,6 +90,15 @@ type Dependencies = Readonly<{
 }>;
 
 export function createReminderRuntime(dependencies: Dependencies): ReminderRuntime {
+  type ListMode = 'upcoming' | 'past';
+  type CursorState = Readonly<{
+    mode: ListMode;
+    context: ActiveChildContext;
+    boundaryEpochMs: number;
+    repositoryCursor: ReminderCursor;
+  }>;
+  const cursorStates = new WeakMap<object, CursorState>();
+
   function run<T>(
     expected: ActiveChildContext | undefined,
     operation: (
@@ -129,6 +160,75 @@ export function createReminderRuntime(dependencies: Dependencies): ReminderRunti
     });
   }
 
+  function readCursor(
+    cursor: ReminderListCursor | null,
+    mode: ListMode,
+  ): CursorState | null {
+    if (cursor === null) return null;
+    if (typeof cursor !== 'object') {
+      throw new ReminderRuntimeError('invalid-pagination-cursor');
+    }
+    const state = cursorStates.get(cursor);
+    if (state === undefined || state.mode !== mode) {
+      throw new ReminderRuntimeError('invalid-pagination-cursor');
+    }
+    return state;
+  }
+
+  function issueCursor(state: CursorState): ReminderListCursor {
+    const cursor = Object.freeze({ [reminderListCursorBrand]: true as const });
+    cursorStates.set(cursor, state);
+    return cursor;
+  }
+
+  async function getBoundedList(
+    mode: ListMode,
+    limit: number,
+    cursor: ReminderListCursor | null,
+  ): Promise<ReminderSnapshot<ReminderListPage>> {
+    const cursorState = readCursor(cursor, mode);
+    const snapshot = await run(
+      cursorState?.context,
+      async (repository, child) => {
+        const boundaryEpochMs = cursorState?.boundaryEpochMs ?? dependencies.getCurrentEpochMs();
+        const page = mode === 'upcoming'
+          ? await readUpcomingReminders(
+              repository,
+              child.id,
+              boundaryEpochMs,
+              limit,
+              cursorState?.repositoryCursor,
+            )
+          : await readPastReminders(
+              repository,
+              child.id,
+              boundaryEpochMs,
+              limit,
+              cursorState?.repositoryCursor,
+            );
+        return { boundaryEpochMs, page };
+      },
+      undefined,
+      true,
+    );
+    const nextRepositoryCursor = snapshot.value.page.nextCursor;
+    return {
+      context: snapshot.context,
+      child: snapshot.child,
+      value: {
+        items: snapshot.value.page.items,
+        nextCursor: nextRepositoryCursor === null
+          ? null
+          : issueCursor({
+              mode,
+              context: snapshot.context,
+              boundaryEpochMs: snapshot.value.boundaryEpochMs,
+              repositoryCursor: nextRepositoryCursor,
+            }),
+      },
+    };
+  }
+
   return {
     checkMutation(context, pending) {
       return run(context, (repository, child) => {
@@ -147,6 +247,12 @@ export function createReminderRuntime(dependencies: Dependencies): ReminderRunti
         }
         return readReminderList(repository, child.id, limit, before);
       }, undefined, true);
+    },
+    getUpcoming(limit = 20, cursor = null) {
+      return getBoundedList('upcoming', limit, cursor);
+    },
+    getPast(limit = 20, cursor = null) {
+      return getBoundedList('past', limit, cursor);
     },
     getById(context, id) {
       return run(context, (repository, child) => readReminderById(repository, child.id, id));

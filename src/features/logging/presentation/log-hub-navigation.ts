@@ -15,3 +15,5 @@ export function openDiaperLog(): void {
 export function openGrowthLog(): void { router.push('/growth'); }
 
 export function openMilestones(): void { router.push('/milestones'); }
+
+export function openReminders(): void { router.push('/reminders'); }

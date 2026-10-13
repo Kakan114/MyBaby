@@ -3,11 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const push = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', () => ({ router: { push } }));
 
-import { openDiaperLog, openFeedingLog, openSleepLog, openGrowthLog, openMilestones } from './log-hub-navigation';
+import { openDiaperLog, openFeedingLog, openSleepLog, openGrowthLog, openMilestones, openReminders } from './log-hub-navigation';
 
 describe('Logga hub navigation', () => {
   it('opens Growth logging', () => { openGrowthLog(); expect(push).toHaveBeenCalledWith('/growth'); });
   it('opens Milestones recording', () => { openMilestones(); expect(push).toHaveBeenCalledWith('/milestones'); });
+  it('opens Reminders', () => { openReminders(); expect(push).toHaveBeenCalledWith('/reminders'); });
   beforeEach(() => push.mockClear());
 
   it('keeps Feeding navigation unchanged', () => {

@@ -6,6 +6,8 @@ import {
   deleteReminder,
   readReminderById,
   readReminderList,
+  readPastReminders,
+  readUpcomingReminders,
   recordReminder,
   updateReminder,
 } from './reminder';
@@ -43,6 +45,11 @@ function fixture(initial: readonly Reminder[] = []) {
     listUpcomingByChild: vi.fn(async (childId, afterEpochMs, limit) => ({
       items: [...items.values()].filter((item) =>
         item.childId === childId && item.scheduledAtEpochMs > afterEpochMs).slice(0, limit),
+      nextCursor: null,
+    })),
+    listPastByChild: vi.fn(async (childId, atOrBeforeEpochMs, limit) => ({
+      items: [...items.values()].filter((item) =>
+        item.childId === childId && item.scheduledAtEpochMs <= atOrBeforeEpochMs).slice(0, limit),
       nextCursor: null,
     })),
     updateIfMatches: vi.fn(async (expected, replacement) => {
@@ -117,6 +124,22 @@ describe('Reminder application operations', () => {
     expect(await readReminderById(repository, child.id, expired.id)).toEqual(expired);
     expect((await readReminderList(repository, child.id, 20)).items).toEqual([expired]);
     expect(items.get(expired.id)).toEqual(expired);
+  });
+
+  it('delegates bounded upcoming and past reads and sanitizes failures', async () => {
+    const future = reminder({ id: 'future' });
+    const past = reminder({ id: 'past', scheduledAtEpochMs: now });
+    const { repository } = fixture([future, past]);
+    await expect(readUpcomingReminders(repository, child.id, now, 20))
+      .resolves.toMatchObject({ items: [{ id: 'future' }] });
+    await expect(readPastReminders(repository, child.id, now, 20))
+      .resolves.toMatchObject({ items: [{ id: 'past' }] });
+    expect(repository.listUpcomingByChild).toHaveBeenCalledWith(child.id, now, 20, null);
+    expect(repository.listPastByChild).toHaveBeenCalledWith(child.id, now, 20, null);
+
+    vi.mocked(repository.listPastByChild).mockRejectedValueOnce(new Error('raw SQLite'));
+    await expect(readPastReminders(repository, child.id, now, 20))
+      .rejects.toMatchObject({ code: 'local-data-unavailable' });
   });
 
   it('rejects stale and foreign expected snapshots', async () => {

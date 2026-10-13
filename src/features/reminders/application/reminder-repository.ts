@@ -26,6 +26,13 @@ export interface ReminderRepository {
     limit: number,
     after?: ReminderCursor | null,
   ): Promise<ReminderPage>;
+  /** Passed reminders only, in descending instant/ID order. */
+  listPastByChild(
+    childId: string,
+    atOrBeforeEpochMs: number,
+    limit: number,
+    before?: ReminderCursor | null,
+  ): Promise<ReminderPage>;
   updateIfMatches(expected: Reminder, replacement: Reminder): Promise<boolean>;
   deleteIfMatches(expected: Reminder): Promise<boolean>;
 }

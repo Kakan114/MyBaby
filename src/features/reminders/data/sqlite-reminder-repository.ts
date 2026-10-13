@@ -186,6 +186,44 @@ export class SqliteReminderRepository implements ReminderRepository {
     };
   }
 
+  async listPastByChild(
+    childId: string,
+    atOrBeforeEpochMs: number,
+    limit: number,
+    before: ReminderCursor | null = null,
+  ): Promise<ReminderPage> {
+    assertIdentity(childId);
+    assertEpoch(atOrBeforeEpochMs);
+    assertPageSize(limit);
+    const params: BindValue[] = [childId, atOrBeforeEpochMs];
+    let boundary = '';
+    if (before !== null) {
+      assertIdentity(before.id);
+      assertEpoch(before.scheduledAtEpochMs);
+      if (before.childId !== childId || before.scheduledAtEpochMs > atOrBeforeEpochMs) {
+        throw new Error('Reminder cursor ownership or boundary mismatch.');
+      }
+      boundary = ' AND (scheduled_at_epoch_ms < ? OR (scheduled_at_epoch_ms = ? AND id < ?))';
+      params.push(before.scheduledAtEpochMs, before.scheduledAtEpochMs, before.id);
+    }
+    params.push(limit + 1);
+    const rows = await this.database.getAllAsync<ReminderRow>(
+      `SELECT ${columns} FROM reminders ` +
+        `WHERE child_id = ? AND scheduled_at_epoch_ms <= ?${boundary} ` +
+        'ORDER BY scheduled_at_epoch_ms DESC, id DESC LIMIT ?;',
+      params,
+    );
+    const mapped = rows.map((row) => mapRow(row, childId));
+    const items = mapped.slice(0, limit);
+    const last = items.at(-1);
+    return {
+      items,
+      nextCursor: mapped.length > limit && last
+        ? { childId, scheduledAtEpochMs: last.scheduledAtEpochMs, id: last.id }
+        : null,
+    };
+  }
+
   async updateIfMatches(
     expectedInput: Reminder,
     replacementInput: Reminder,

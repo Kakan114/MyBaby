@@ -69,6 +69,34 @@ export async function readReminderList(
   catch { throw new ReminderApplicationError('local-data-unavailable'); }
 }
 
+export async function readUpcomingReminders(
+  repository: ReminderRepository,
+  childId: string,
+  boundaryEpochMs: number,
+  limit: number,
+  after: ReminderCursor | null = null,
+): Promise<ReminderPage> {
+  try {
+    return await repository.listUpcomingByChild(childId, boundaryEpochMs, limit, after);
+  } catch {
+    throw new ReminderApplicationError('local-data-unavailable');
+  }
+}
+
+export async function readPastReminders(
+  repository: ReminderRepository,
+  childId: string,
+  boundaryEpochMs: number,
+  limit: number,
+  before: ReminderCursor | null = null,
+): Promise<ReminderPage> {
+  try {
+    return await repository.listPastByChild(childId, boundaryEpochMs, limit, before);
+  } catch {
+    throw new ReminderApplicationError('local-data-unavailable');
+  }
+}
+
 async function reconcile(
   repository: ReminderRepository,
   attempt: Reminder,

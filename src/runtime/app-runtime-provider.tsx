@@ -14,13 +14,17 @@ import {
 import { AppState } from 'react-native';
 
 import type { TodayRuntime } from '../features/today/runtime/create-today-runtime';
-import type { ChildrenRuntime, DiaperRuntime, FeedingRuntime, SleepRuntime } from './app-runtime';
+import type { ChildrenRuntime, DiaperRuntime, FeedingRuntime, ReminderNotificationsRuntime, SleepRuntime } from './app-runtime';
 import { createProductionAppRuntime } from './create-production-app-runtime';
 import { startReminderNotificationLifecycle } from './reminder-notification-lifecycle';
 
 const GrowthRuntimeContext = createContext<Readonly<{ growth: GrowthRuntime; selection: ActiveChildSelection }> | null>(null);
 const MilestoneRuntimeContext = createContext<Readonly<{ milestones: MilestoneRuntime; selection: ActiveChildSelection }> | null>(null);
-const ReminderRuntimeContext = createContext<Readonly<{ reminders: ReminderRuntime; selection: ActiveChildSelection }> | null>(null);
+const ReminderRuntimeContext = createContext<Readonly<{
+  reminders: ReminderRuntime;
+  notifications: ReminderNotificationsRuntime;
+  selection: ActiveChildSelection;
+}> | null>(null);
 
 const TodayRuntimeContext = createContext<TodayRuntime | null>(null);
 
@@ -44,7 +48,11 @@ export function AppRuntimeProvider({ children }: PropsWithChildren) {
   }, [runtime]);
 
   return (
-    <ReminderRuntimeContext.Provider value={{ reminders: runtime.reminders, selection: runtime.activeChildSelection }}>
+    <ReminderRuntimeContext.Provider value={{
+      reminders: runtime.reminders,
+      notifications: runtime.reminderNotifications,
+      selection: runtime.activeChildSelection,
+    }}>
     <MilestoneRuntimeContext.Provider value={{ milestones: runtime.milestones, selection: runtime.activeChildSelection }}>
       <GrowthRuntimeContext.Provider value={{ growth: runtime.growth, selection: runtime.activeChildSelection }}>
       <TodayRuntimeContext.Provider value={runtime.today}>

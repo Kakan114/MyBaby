@@ -105,6 +105,15 @@ describe('Reminders through shared AppRuntime and encrypted-schema SQLite bounda
       )).value.items).toEqual([first]);
       expect((await f.runtime.reminders.getById(initial.context, first.id)).value).toEqual(first);
 
+      f.database.prepare('INSERT INTO reminders VALUES (?, ?, ?, ?, ?)')
+        .run('expired', 'a', 'Passerad', now, 1);
+      await expect(f.runtime.reminders.getUpcoming()).resolves.toMatchObject({
+        value: { items: [second, first] },
+      });
+      await expect(f.runtime.reminders.getPast()).resolves.toMatchObject({
+        value: { items: [{ id: 'expired' }] },
+      });
+
       const updated = (await f.runtime.reminders.update(initial.context, first, {
         title: 'Uppdaterad', scheduledAtEpochMs: now + 180_000,
       })).value;
@@ -124,7 +133,10 @@ describe('Reminders through shared AppRuntime and encrypted-schema SQLite bounda
       const a = await f.runtime.reminders.getList();
       await f.runtime.reminders.delete(a.context, updated);
       expect((await f.runtime.reminders.getById(a.context, updated.id)).value).toBeNull();
-      expect((await f.runtime.reminders.getList(a.context)).value.items).toEqual([second]);
+      expect((await f.runtime.reminders.getList(a.context)).value.items).toEqual([
+        expect.objectContaining({ id: 'expired' }),
+        second,
+      ]);
       expect(f.createReminderRepository).toHaveBeenCalledOnce();
       expect(f.createReminderRepository).toHaveBeenCalledWith(f.connection);
     } finally {
@@ -141,17 +153,17 @@ describe('Reminders through shared AppRuntime and encrypted-schema SQLite bounda
       ).run('expired', 'a', 'Redan passerad', now - 1, 1);
       const started = Promise.withResolvers<void>();
       const finish = Promise.withResolvers<void>();
-      const original = f.repository.listByChild.bind(f.repository);
-      vi.spyOn(f.repository, 'listByChild').mockImplementationOnce(async (...args) => {
+      const original = f.repository.listPastByChild.bind(f.repository);
+      vi.spyOn(f.repository, 'listPastByChild').mockImplementationOnce(async (...args) => {
         started.resolve();
         await finish.promise;
         return original(...args);
       });
-      const read = f.runtime.reminders.getList();
+      const read = f.runtime.reminders.getPast();
       await started.promise;
       const close = f.runtime.close();
       expect(f.runtime.close()).toBe(close);
-      await expect(f.runtime.reminders.getList()).rejects.toMatchObject({ code: 'runtime-closed' });
+      await expect(f.runtime.reminders.getPast()).rejects.toMatchObject({ code: 'runtime-closed' });
       expect(f.connection.closeAsync).not.toHaveBeenCalled();
       finish.resolve();
       expect((await read).value.items[0]).toMatchObject({ id: 'expired' });

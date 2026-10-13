@@ -166,6 +166,53 @@ describe('Reminder SQLite repository', () => {
     )).resolves.toMatchObject({ items: [{ id: 'future-c' }], nextCursor: null });
   });
 
+  it('pages passed reminders in descending instant/id order from an inclusive boundary', async () => {
+    for (const [id, scheduledAtEpochMs] of [
+      ['oldest', 500],
+      ['past-a', 999],
+      ['past-b', 999],
+      ['boundary-a', 1_000],
+      ['boundary-b', 1_000],
+      ['future', 1_001],
+    ] as const) {
+      await repository.create(createReminder({ ...reminder, id, scheduledAtEpochMs }));
+    }
+    await repository.create(createReminder({
+      ...reminder, id: 'foreign-past', childId: 'other', scheduledAtEpochMs: 1_000,
+    }));
+
+    const seen: string[] = [];
+    let cursor: ReminderCursor | null = null;
+    do {
+      const page = await repository.listPastByChild('child', 1_000, 2, cursor);
+      seen.push(...page.items.map(({ id }) => id));
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+
+    expect(seen).toEqual(['boundary-b', 'boundary-a', 'past-b', 'past-a', 'oldest']);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it('classifies exact-now as past and excludes expired rows from the bounded upcoming query', async () => {
+    for (let index = 0; index < 40; index += 1) {
+      await repository.create(createReminder({
+        ...reminder,
+        id: `expired-${String(index).padStart(2, '0')}`,
+        scheduledAtEpochMs: 900 - index,
+      }));
+    }
+    await repository.create(createReminder({ ...reminder, id: 'now', scheduledAtEpochMs: 1_000 }));
+    await repository.create(createReminder({ ...reminder, id: 'future', scheduledAtEpochMs: 1_001 }));
+
+    await expect(repository.listUpcomingByChild('child', 1_000, 1)).resolves.toMatchObject({
+      items: [{ id: 'future' }],
+      nextCursor: null,
+    });
+    await expect(repository.listPastByChild('child', 1_000, 1)).resolves.toMatchObject({
+      items: [{ id: 'now' }],
+    });
+  });
+
   it('rejects foreign or malformed cursors, identities, and invalid page sizes', async () => {
     await expect(repository.getById('', reminder.id)).rejects.toThrow();
     await expect(repository.getById('child', ' ')).rejects.toThrow();
@@ -180,6 +227,13 @@ describe('Reminder SQLite repository', () => {
       childId: 'child', scheduledAtEpochMs: 1_000, id: reminder.id,
     })).rejects.toThrow();
     await expect(repository.listUpcomingByChild('child', 1.5, 20)).rejects.toThrow();
+    await expect(repository.listPastByChild('child', 1_000, 20, {
+      childId: 'other', scheduledAtEpochMs: 999, id: reminder.id,
+    })).rejects.toThrow();
+    await expect(repository.listPastByChild('child', 1_000, 20, {
+      childId: 'child', scheduledAtEpochMs: 1_001, id: reminder.id,
+    })).rejects.toThrow();
+    await expect(repository.listPastByChild('child', 1.5, 20)).rejects.toThrow();
     await expect(repository.listByChild('child', 20, {
       childId: 'child', scheduledAtEpochMs: 1.5, id: reminder.id,
     })).rejects.toThrow();
@@ -188,6 +242,8 @@ describe('Reminder SQLite repository', () => {
     })).rejects.toThrow();
     for (const limit of [0, -1, 101, 1.5, NaN]) {
       await expect(repository.listByChild('child', limit)).rejects.toThrow();
+      await expect(repository.listUpcomingByChild('child', 1_000, limit)).rejects.toThrow();
+      await expect(repository.listPastByChild('child', 1_000, limit)).rejects.toThrow();
     }
   });
 
@@ -219,6 +275,8 @@ describe('Reminder SQLite repository', () => {
     });
     await expect(malformed.getById('child', reminder.id)).rejects.toThrow();
     await expect(malformed.listByChild('child', 20)).rejects.toThrow();
+    await expect(malformed.listUpcomingByChild('child', 0, 20)).rejects.toThrow();
+    await expect(malformed.listPastByChild('child', MAX_REMINDER_EPOCH_MS, 20)).rejects.toThrow();
   });
 
   it('propagates one requested database failure without retries', async () => {
@@ -232,11 +290,12 @@ describe('Reminder SQLite repository', () => {
     await expect(failing.getById('child', reminder.id)).rejects.toBe(error);
     await expect(failing.listByChild('child', 20)).rejects.toBe(error);
     await expect(failing.listUpcomingByChild('child', 0, 20)).rejects.toBe(error);
+    await expect(failing.listPastByChild('child', 0, 20)).rejects.toBe(error);
     await expect(failing.updateIfMatches(reminder, replacement)).rejects.toBe(error);
     await expect(failing.deleteIfMatches(reminder)).rejects.toBe(error);
     expect(runAsync).toHaveBeenCalledTimes(3);
     expect(getFirstAsync).toHaveBeenCalledOnce();
-    expect(getAllAsync).toHaveBeenCalledTimes(2);
+    expect(getAllAsync).toHaveBeenCalledTimes(3);
   });
 
   it('binds every value and uses neither replacement nor upsert SQL', async () => {

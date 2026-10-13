@@ -15,7 +15,7 @@ import {
 } from '@/features/sleep/presentation/sleep-format';
 
 import { useSleepHubStatus } from './use-sleep-hub-status';
-import { openDiaperLog, openFeedingLog, openSleepLog, openGrowthLog, openMilestones } from './log-hub-navigation';
+import { openDiaperLog, openFeedingLog, openSleepLog, openGrowthLog, openMilestones, openReminders } from './log-hub-navigation';
 
 const milestoneSymbol = { ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' } as const satisfies
   ComponentProps<typeof SymbolView>['name'];
@@ -37,6 +37,11 @@ export function LogHubScreen() {
         <AppText variant="headingMedium">{t('logging.feeding.title')}</AppText>
         <AppText style={styles.secondary}>{t('logging.feeding.description')}</AppText>
         <Button onPress={openFeedingLog}>{t('logging.feeding.open')}</Button>
+      </Card>
+      <Card style={styles.card}>
+        <AppText variant="headingMedium">{t('logging.reminders.title')}</AppText>
+        <AppText style={styles.secondary}>{t('logging.reminders.description')}</AppText>
+        <Button onPress={openReminders}>{t('logging.reminders.open')}</Button>
       </Card>
       <Card style={styles.card}>
         <AppText variant="headingMedium">{t('logging.sleep.title')}</AppText>
